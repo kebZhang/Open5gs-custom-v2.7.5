@@ -15,15 +15,19 @@
  * (not ns). We emit "YYYY-MM-DDTHH:MM:SS.ffffffZ" (UTC, 6 fractional digits).
  */
 
+#include <stdlib.h> /* calloc/free for the large ring buffer */
+
 #include "ogs-sbi.h"
 #include "http-log.h"
 
 #define HTTP_LOG_DEFAULT_PATH   "/tmp/HTTP_log.txt"
 
-/* Ring capacity (number of pre-formatted lines). The user has large memory;
- * at ~180k lines/s a writer doing ~36 MB/s keeps up easily, so the ring only
- * fills on bursts. 1<<20 slots * ~512 B ~= 512 MB worst case. */
-#define HTTP_LOG_RING_SLOTS     (1 << 20)
+/* Ring capacity (number of pre-formatted lines). Sized to absorb bursts within
+ * a flush interval at high load while keeping per-NF memory bounded: at
+ * 1<<18 slots * 1028 B ~= 257 MB per NF. With ~11 SBI NFs each holding one ring
+ * that is ~2.8 GB cluster-wide (vs ~11 GB at 1<<20). 262144 buffered lines is
+ * tens of x headroom for 1000 UE/s with a 200 ms writer flush. */
+#define HTTP_LOG_RING_SLOTS     (1 << 18)
 /* Worst-case registration line (RSP_RX with ctx_id, suci ueid, longest UDR
  * nudr-dr URI ~160 B) is ~330 B; 1024 gives ~3x headroom. ogs_snprintf()
  * returns the length that *would* have been written, so a line exceeding this
@@ -232,7 +236,11 @@ void ogs_http_log_init(void)
         return;
     }
 
-    self.ring = ogs_calloc(HTTP_LOG_RING_SLOTS, sizeof(http_log_slot_t));
+    /* The ring is a single ~1 GiB long-lived block allocated once at startup.
+     * Use the libc allocator, not ogs_calloc(): open5gs' talloc pool rejects a
+     * block this large (it failed here with "ring alloc failed"), which left the
+     * logger un-inited so nothing was ever written. malloc has no such cap. */
+    self.ring = calloc(HTTP_LOG_RING_SLOTS, sizeof(http_log_slot_t));
     if (!self.ring) {
         ogs_error("ogs_http_log_init: ring alloc failed");
         fclose(self.fp);
@@ -276,7 +284,7 @@ void ogs_http_log_final(void)
     }
 
     if (self.ring) {
-        ogs_free(self.ring);
+        free(self.ring); /* paired with calloc() in init */
         self.ring = NULL;
     }
 

@@ -14,15 +14,17 @@
  * http-log.c, so DB and HTTP lines sort together.
  */
 
+#include <stdlib.h> /* calloc/free for the large ring buffer */
+
 #include "ogs-dbi.h"
 #include "db-log.h"
 
 #define DB_LOG_DEFAULT_PATH     "/tmp/DB_log.txt"
 
 /* Ring capacity (number of pre-formatted lines). DB ops per registration are far
- * fewer than HTTP messages, so this only fills on extreme bursts.
- * 1<<20 slots * ~512 B ~= 512 MB worst case. */
-#define DB_LOG_RING_SLOTS       (1 << 20)
+ * fewer than HTTP messages, so this only fills on extreme bursts. Sized like the
+ * HTTP ring: 1<<18 slots * 516 B ~= 129 MB per NF (only UDR and PCF hold one). */
+#define DB_LOG_RING_SLOTS       (1 << 18)
 /* Worst-case line (long collection + subresource + imsi ueid) is well under this;
  * ogs_snprintf() returns the would-be length, so an over-long line is dropped
  * (not written truncated) to avoid corrupting the JSON stream. */
@@ -180,7 +182,10 @@ void ogs_db_log_init(const char *nf_name)
         return;
     }
 
-    self.ring = ogs_calloc(DB_LOG_RING_SLOTS, sizeof(db_log_slot_t));
+    /* Long-lived ~0.5 GiB block allocated once. Use libc calloc(), not
+     * ogs_calloc(): open5gs' talloc pool rejects a block this large, which would
+     * leave the logger un-inited (empty DB_log.txt). malloc has no such cap. */
+    self.ring = calloc(DB_LOG_RING_SLOTS, sizeof(db_log_slot_t));
     if (!self.ring) {
         ogs_error("ogs_db_log_init: ring alloc failed");
         fclose(self.fp);
@@ -224,7 +229,7 @@ void ogs_db_log_final(void)
     }
 
     if (self.ring) {
-        ogs_free(self.ring);
+        free(self.ring); /* paired with calloc() in init */
         self.ring = NULL;
     }
 
