@@ -45,6 +45,9 @@ static ogs_sbi_server_t *server_from_stream(ogs_sbi_stream_t *stream);
 static ogs_pool_id_t id_from_stream(ogs_sbi_stream_t *stream);
 static void *stream_find_by_id(ogs_pool_id_t id);
 
+/* TYcustom: originating request of a server stream (for RSP_TX logging) */
+static ogs_sbi_request_t *request_from_stream(ogs_sbi_stream_t *stream);
+
 const ogs_sbi_server_actions_t ogs_mhd_server_actions = {
     server_init,
     server_final,
@@ -59,6 +62,8 @@ const ogs_sbi_server_actions_t ogs_mhd_server_actions = {
     server_from_stream,
     id_from_stream,
     stream_find_by_id,
+
+    request_from_stream,
 };
 
 static void run(short when, ogs_socket_t fd, void *data);
@@ -631,4 +636,13 @@ static ogs_pool_id_t id_from_stream(ogs_sbi_stream_t *stream)
 static void *stream_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&session_pool, id);
+}
+
+/* TYcustom */
+static ogs_sbi_request_t *request_from_stream(ogs_sbi_stream_t *stream)
+{
+    ogs_sbi_session_t *sbi_sess = (ogs_sbi_session_t *)stream;
+
+    ogs_assert(sbi_sess);
+    return sbi_sess->request;
 }

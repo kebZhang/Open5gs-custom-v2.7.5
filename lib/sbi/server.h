@@ -71,6 +71,9 @@ typedef struct ogs_sbi_server_actions_s {
 
     ogs_pool_id_t (*id_from_stream)(ogs_sbi_stream_t *stream);
     void *(*stream_find_by_id)(ogs_pool_id_t id);
+
+    /* TYcustom: originating request of a server stream (for RSP_TX logging) */
+    ogs_sbi_request_t *(*request_from_stream)(ogs_sbi_stream_t *stream);
 } ogs_sbi_server_actions_t;
 
 void ogs_sbi_server_init(int num_of_session_pool, int num_of_stream_pool);
@@ -106,6 +109,9 @@ ogs_sbi_server_t *ogs_sbi_server_from_stream(ogs_sbi_stream_t *stream);
 
 ogs_pool_id_t ogs_sbi_id_from_stream(ogs_sbi_stream_t *stream);
 void *ogs_sbi_stream_find_by_id(ogs_pool_id_t id);
+
+/* TYcustom */
+ogs_sbi_request_t *ogs_sbi_request_from_stream(ogs_sbi_stream_t *stream);
 
 ogs_sbi_server_t *ogs_sbi_server_first(void);
 ogs_sbi_server_t *ogs_sbi_server_next(ogs_sbi_server_t *current);

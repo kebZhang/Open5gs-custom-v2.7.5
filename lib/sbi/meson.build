@@ -41,6 +41,8 @@ libsbi_sources = files('''
     
     path.c
     nf-sm.c
+
+    http-log.c
 '''.split())
 
 libsbi_inc = include_directories('.')

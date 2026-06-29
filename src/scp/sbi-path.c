@@ -135,6 +135,12 @@ static int request_handler(ogs_sbi_request_t *request, void *data)
     ogs_assert(request);
     ogs_assert(request->h.uri);
 
+    /* TYcustom: REQ_RX -- the SCP received a request from a consumer NF. The SCP
+     * registers its own request_handler (not lib/sbi's ogs_sbi_server_handler),
+     * so this point would otherwise be missed; emit it here so each SCP hop has
+     * all four views. ueid is left empty (extracted offline from the URI). */
+    ogs_http_log_request(OGS_HTTP_LOG_REQ_RX, request, NULL);
+
     stream_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
             stream_id <= OGS_MAX_POOL_ID);

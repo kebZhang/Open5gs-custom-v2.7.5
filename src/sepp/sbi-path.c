@@ -179,6 +179,11 @@ static int request_handler(ogs_sbi_request_t *request, void *data)
     ogs_assert(request);
     ogs_assert(request->h.uri);
 
+    /* TYcustom: REQ_RX -- the SEPP received a request. Like the SCP, the SEPP
+     * registers its own request_handler (not lib/sbi's ogs_sbi_server_handler),
+     * so this view would otherwise be missed. ueid is extracted offline. */
+    ogs_http_log_request(OGS_HTTP_LOG_REQ_RX, request, NULL);
+
     stream_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
             stream_id <= OGS_MAX_POOL_ID);

@@ -116,6 +116,9 @@
 
 #undef OGS_SBI_INSIDE
 
+/* TYcustom: asynchronous HTTP access logging (not under sbi/ guard) */
+#include "http-log.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

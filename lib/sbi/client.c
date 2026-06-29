@@ -50,6 +50,11 @@ typedef struct connection_s {
     char *location;
     char *producer_id;
 
+    /* TYcustom: ue_id sniffed from the request body at send time, carried to
+     * the response (RSP_RX) so a {ctx_id -> ue_id} mapping line can be emitted
+     * for the nausf ue-authentications case. */
+    char *ue_id;
+
     ogs_timer_t *timer;
     CURL *easy;
 
@@ -610,6 +615,8 @@ static void connection_free(connection_t *conn)
         ogs_free(conn->location);
     if (conn->producer_id)
         ogs_free(conn->producer_id);
+    if (conn->ue_id)
+        ogs_free(conn->ue_id);
 
     if (conn->memory)
         ogs_free(conn->memory);
@@ -668,6 +675,10 @@ static void connection_timer_expired(void *data)
 
     connection_remove(conn);
 }
+
+/* TYcustom: forward declaration -- defined below check_multi_info() but used
+ * inside it for the RSP_RX auth-response ctx_id extraction. */
+static char *ctx_id_from_uri(const char *uri);
 
 static void check_multi_info(ogs_sbi_client_t *client)
 {
@@ -756,6 +767,25 @@ static void check_multi_info(ogs_sbi_client_t *client)
             } else
                 ogs_warn("[%d] %s", res, conn->error);
 
+            /* TYcustom: RSP_RX -- this NF received a response.
+             * - ue_id: the value sniffed from the matching request (carried on
+             *   conn), so e.g. the nausf auth response is attributed to its UE.
+             * - ctx_id: for the auth response, the AUSF-assigned id lives in the
+             *   Location header (".../ue-authentications/<id>"). Emitting both
+             *   ue_id and ctx_id on this one line builds the offline
+             *   {ctx_id -> ue_id} map used to attribute the later
+             *   5g-aka-confirmation request. */
+            if (res == CURLE_OK && response) {
+                char *ctx_id = NULL;
+                if (conn->location &&
+                        strstr(conn->location, "/ue-authentications/"))
+                    ctx_id = ctx_id_from_uri(conn->location);
+                ogs_http_log_response(OGS_HTTP_LOG_RSP_RX,
+                        response, conn->ue_id, ctx_id);
+                if (ctx_id)
+                    ogs_free(ctx_id);
+            }
+
             ogs_assert(conn->client_cb);
             if (res == CURLE_OK)
                 conn->client_cb(OGS_OK, response, conn->data);
@@ -771,11 +801,112 @@ static void check_multi_info(ogs_sbi_client_t *client)
     }
 }
 
+/*
+ * TYcustom HTTP-log helpers.
+ *
+ * sniff_req_ueid(): for the two requests whose UE id lives ONLY in the body
+ *   (POST /nausf-auth/v1/ue-authentications -> supiOrSuci,
+ *    POST /npcf-am-policy-control/v1/policies -> supi), extract that value
+ *   from request->http.content (read-only, no body consumption). Returns a
+ *   malloc'd string (caller frees) or NULL. Every other request pays nothing.
+ *
+ * ctx_id_from_uri(): pull the <id> out of
+ *   ".../ue-authentications/<id>/5g-aka-confirmation" or out of the auth
+ *   response Location ".../ue-authentications/<id>". Returns malloc'd or NULL.
+ */
+static char *sniff_json_string(const char *body, const char *field)
+{
+    /* tiny, dependency-free: find "field"\s*:\s*"value" */
+    char key[64];
+    const char *p, *q;
+    int n;
+    char *out;
+
+    if (!body || !field)
+        return NULL;
+    ogs_snprintf(key, sizeof(key), "\"%s\"", field);
+    p = strstr(body, key);
+    if (!p)
+        return NULL;
+    p = strchr(p + strlen(key), ':');
+    if (!p)
+        return NULL;
+    p++;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (*p != '"')
+        return NULL;
+    p++;
+    q = strchr(p, '"');
+    if (!q)
+        return NULL;
+    n = (int)(q - p);
+    if (n <= 0)
+        return NULL;
+    out = ogs_malloc(n + 1);
+    if (!out)
+        return NULL;
+    memcpy(out, p, n);
+    out[n] = 0;
+    return out;
+}
+
+static char *sniff_req_ueid(ogs_sbi_request_t *request)
+{
+    const char *uri, *field = NULL;
+
+    if (!request || !request->h.method || !request->h.uri)
+        return NULL;
+    if (strcmp(request->h.method, OGS_SBI_HTTP_METHOD_POST) != 0)
+        return NULL;
+    if (!request->http.content)
+        return NULL;
+
+    uri = request->h.uri;
+    if (strstr(uri, "/nausf-auth/v1/ue-authentications") &&
+            !strstr(uri, "5g-aka-confirmation"))
+        field = "supiOrSuci";
+    else if (strstr(uri, "/npcf-am-policy-control/v1/policies"))
+        field = "supi";
+    else
+        return NULL;
+
+    return sniff_json_string(request->http.content, field);
+}
+
+/* extract the path segment after ".../ue-authentications/" up to '/' or end */
+static char *ctx_id_from_uri(const char *uri)
+{
+    const char *anchor = "/ue-authentications/";
+    const char *p, *q;
+    int n;
+    char *out;
+
+    if (!uri)
+        return NULL;
+    p = strstr(uri, anchor);
+    if (!p)
+        return NULL;
+    p += strlen(anchor);
+    for (q = p; *q && *q != '/' && *q != '?'; q++)
+        ;
+    n = (int)(q - p);
+    if (n <= 0)
+        return NULL;
+    out = ogs_malloc(n + 1);
+    if (!out)
+        return NULL;
+    memcpy(out, p, n);
+    out[n] = 0;
+    return out;
+}
+
 bool ogs_sbi_client_send_request(
         ogs_sbi_client_t *client, ogs_sbi_client_cb_f client_cb,
         ogs_sbi_request_t *request, void *data)
 {
     connection_t *conn = NULL;
+    char *ue_id = NULL;
 
     ogs_assert(client);
     ogs_assert(request);
@@ -786,11 +917,21 @@ bool ogs_sbi_client_send_request(
     }
     ogs_debug("[%s] %s", request->h.method, request->h.uri);
 
+    /* TYcustom: REQ_TX -- log the outgoing request (this NF is the sender).
+     * For body-only requests, sniff the UE id from the body. */
+    ue_id = sniff_req_ueid(request);
+    ogs_http_log_request(OGS_HTTP_LOG_REQ_TX, request, ue_id);
+
     conn = connection_add(client, client_cb, request, data);
     if (!conn) {
         ogs_error("connection_add() failed");
+        if (ue_id)
+            ogs_free(ue_id);
         return false;
     }
+
+    /* carry the sniffed ue_id to the response side (RSP_RX) */
+    conn->ue_id = ue_id;
 
     return true;
 }

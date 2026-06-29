@@ -43,6 +43,10 @@ static ogs_sbi_server_t *server_from_stream(ogs_sbi_stream_t *stream);
 static ogs_pool_id_t id_from_stream(ogs_sbi_stream_t *stream);
 static void *stream_find_by_id(ogs_pool_id_t id);
 
+/* TYcustom: expose the stream's originating request so the RSP_TX http-log
+ * point can key off the request path (the response carries no h.uri). */
+static ogs_sbi_request_t *request_from_stream(ogs_sbi_stream_t *stream);
+
 const ogs_sbi_server_actions_t ogs_nghttp2_server_actions = {
     server_init,
     server_final,
@@ -58,6 +62,8 @@ const ogs_sbi_server_actions_t ogs_nghttp2_server_actions = {
 
     id_from_stream,
     stream_find_by_id,
+
+    request_from_stream,
 };
 
 struct h2_settings {
@@ -811,6 +817,13 @@ static ogs_pool_id_t id_from_stream(ogs_sbi_stream_t *stream)
 static void *stream_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&stream_pool, id);
+}
+
+/* TYcustom */
+static ogs_sbi_request_t *request_from_stream(ogs_sbi_stream_t *stream)
+{
+    ogs_assert(stream);
+    return stream->request;
 }
 
 static ogs_sbi_session_t *session_add(

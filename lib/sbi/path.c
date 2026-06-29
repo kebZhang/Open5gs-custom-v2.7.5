@@ -35,6 +35,12 @@ int ogs_sbi_server_handler(ogs_sbi_request_t *request, void *data)
     ogs_assert(request);
     ogs_assert(data);
 
+    /* TYcustom: REQ_RX -- this NF received a request, before it is queued for
+     * business processing. ueid is left empty (extracted offline from the URI
+     * for the URI-carried cases); body-only requests are attributed offline by
+     * pairing with the sender's REQ_TX line on (method, uri). */
+    ogs_http_log_request(OGS_HTTP_LOG_REQ_RX, request, NULL);
+
     e = ogs_event_new(OGS_EVENT_SBI_SERVER);
     ogs_assert(e);
 

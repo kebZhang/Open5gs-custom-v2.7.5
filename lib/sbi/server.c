@@ -181,6 +181,13 @@ bool ogs_sbi_server_send_rspmem_persistent(
 bool ogs_sbi_server_send_response(
         ogs_sbi_stream_t *stream, ogs_sbi_response_t *response)
 {
+    /* TYcustom: RSP_TX -- this NF is sending a response. The response itself
+     * carries no h.uri/h.method (ogs_sbi_build_response() leaves them unset),
+     * so we pass the originating request from the stream; the log keys off the
+     * request's (method, uri-path), the same path REQ_RX recorded. ueid is left
+     * empty (attributed offline by pairing on that path). */
+    ogs_http_log_rsp_tx(response, ogs_sbi_request_from_stream(stream));
+
     return ogs_sbi_server_actions.send_response(stream, response);
 }
 
@@ -260,6 +267,12 @@ ogs_pool_id_t ogs_sbi_id_from_stream(ogs_sbi_stream_t *stream)
 void *ogs_sbi_stream_find_by_id(ogs_pool_id_t id)
 {
     return ogs_sbi_server_actions.stream_find_by_id(id);
+}
+
+/* TYcustom */
+ogs_sbi_request_t *ogs_sbi_request_from_stream(ogs_sbi_stream_t *stream)
+{
+    return ogs_sbi_server_actions.request_from_stream(stream);
 }
 
 static ogs_sbi_server_t *ogs_sbi_server_find_by_interface(

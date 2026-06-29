@@ -49,6 +49,9 @@ void ogs_sbi_context_init(OpenAPI_nf_type_e nf_type)
     ogs_sbi_server_init(ogs_app()->pool.event, ogs_app()->pool.event);
     ogs_sbi_client_init(ogs_app()->pool.event, ogs_app()->pool.event);
 
+    /* TYcustom: start the asynchronous HTTP access-log writer thread */
+    ogs_http_log_init();
+
     ogs_list_init(&self.nf_instance_list);
     ogs_pool_init(&nf_instance_pool, ogs_app()->pool.nf);
     ogs_pool_init(&nf_service_pool, ogs_app()->pool.nf_service);
@@ -95,6 +98,9 @@ void ogs_sbi_context_init(OpenAPI_nf_type_e nf_type)
 void ogs_sbi_context_final(void)
 {
     ogs_assert(context_initialized == 1);
+
+    /* TYcustom: flush + stop the HTTP access-log writer thread */
+    ogs_http_log_final();
 
     ogs_sbi_subscription_data_remove_all();
     ogs_pool_final(&subscription_data_pool);
