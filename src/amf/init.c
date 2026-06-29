@@ -20,6 +20,7 @@
 #include "sbi-path.h"
 #include "ngap-path.h"
 #include "metrics.h"
+#include "accesslog.h"
 
 static ogs_thread_t *thread;
 static void amf_main(void *data);
@@ -62,6 +63,10 @@ int amf_initialize(void)
     rv = ngap_open();
     if (rv != OGS_OK) return rv;
 
+    /* AMF_log: start the async NAS/SCTP access-log writer before the event
+     * thread, so it is ready for the first message. */
+    amf_accesslog_init();
+
     thread = ogs_thread_create(amf_main, NULL);
     if (!thread) return OGS_ERROR;
 
@@ -102,6 +107,10 @@ void amf_terminate(void)
     event_termination();
     ogs_thread_destroy(thread);
     ogs_timer_delete(t_termination_holding);
+
+    /* AMF_log: stop the writer after the event thread is gone (no more log
+     * calls can happen); this drains and flushes the remaining records. */
+    amf_accesslog_final();
 
     ngap_close();
     amf_sbi_close();

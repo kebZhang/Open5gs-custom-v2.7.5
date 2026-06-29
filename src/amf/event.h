@@ -67,11 +67,13 @@ typedef struct amf_event_s {
 
         NGAP_ProcedureCode_t code;
         ogs_ngap_message_t *message;
+        ogs_time_t recv_time; /* SCTP read time; carried to NAS layer for AMF_log */
     } ngap;
 
     struct {
         uint8_t type;
         ogs_nas_5gs_message_t *message;
+        ogs_time_t recv_time; /* copied from the NGAP event for AMF_log */
     } nas;
 
     ogs_pool_id_t gnb_id;
@@ -90,7 +92,8 @@ const char *amf_event_get_name(amf_event_t *e);
 
 void amf_sctp_event_push(int id,
         void *sock, ogs_sockaddr_t *addr, ogs_pkbuf_t *pkbuf,
-        uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams);
+        uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams,
+        ogs_time_t recv_time);
 
 #ifdef __cplusplus
 }

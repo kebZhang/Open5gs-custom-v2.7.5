@@ -22,6 +22,7 @@
 #include "ngap-path.h"
 #include "nas-path.h"
 #include "sbi-path.h"
+#include "accesslog.h"
 
 #include "gmm-handler.h"
 
@@ -194,6 +195,11 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_request(amf_ue_t *amf_ue,
         break;
     }
 
+    /* AMF_log: the UE id (SUCI/SUPI) is now resolved for all identity types.
+     * Record the uplink RegistrationRequest with its SCTP read time. */
+    amf_accesslog_ngap("UL", "RegistrationRequest",
+            amf_ue->supi ? amf_ue->supi : amf_ue->suci,
+            amf_recvtime_get());
 
     /* Set 5GS Registration Type */
     memcpy(&amf_ue->nas.registration, registration_type,
@@ -923,6 +929,11 @@ int gmm_handle_authentication_response(amf_ue_t *amf_ue,
     ogs_assert(amf_ue);
     ogs_assert(authentication_response);
 
+    /* AMF_log: uplink AuthenticationResponse with its SCTP read time. */
+    amf_accesslog_ngap("UL", "AuthenticationResponse",
+            amf_ue->supi ? amf_ue->supi : amf_ue->suci,
+            amf_recvtime_get());
+
     authentication_response_parameter = &authentication_response->
                 authentication_response_parameter;
 
@@ -1044,6 +1055,11 @@ ogs_nas_5gmm_cause_t gmm_handle_security_mode_complete(amf_ue_t *amf_ue,
     ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
     ogs_assert(ran_ue);
     ogs_assert(security_mode_complete);
+
+    /* AMF_log: uplink SecurityModeComplete with its SCTP read time. */
+    amf_accesslog_ngap("UL", "SecurityModeComplete",
+            amf_ue->supi ? amf_ue->supi : amf_ue->suci,
+            amf_recvtime_get());
 
     /*
      * TS33.501

@@ -26,6 +26,7 @@
 #include "nsmf-handler.h"
 #include "nnssf-handler.h"
 #include "nas-security.h"
+#include "accesslog.h"
 
 void amf_state_initial(ogs_fsm_t *s, amf_event_t *e)
 {
@@ -899,6 +900,9 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         if (rc == OGS_OK) {
             e->gnb_id = gnb->id;
             e->ngap.message = &ngap_message;
+            /* AMF_log: make the SCTP read time available to ngap-path.c, which
+             * copies it onto the new 5GMM event for later UL logging. */
+            amf_recvtime_set(e->ngap.recv_time);
             ogs_fsm_dispatch(&gnb->sm, e);
         } else {
             ogs_error("Cannot decode NGAP message");
@@ -1058,6 +1062,9 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         e->amf_ue_id = amf_ue->id;
         e->nas.message = &nas_message;
 
+        /* AMF_log: republish the SCTP read time (carried on the 5GMM event)
+         * so the gmm-handler can attach it to the UL record. */
+        amf_recvtime_set(e->nas.recv_time);
         ogs_fsm_dispatch(&amf_ue->sm, e);
 
         ogs_pkbuf_free(pkbuf);

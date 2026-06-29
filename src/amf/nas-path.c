@@ -21,6 +21,7 @@
 #include "ngap-build.h"
 #include "gmm-build.h"
 #include "nas-path.h"
+#include "accesslog.h"
 
 int nas_5gs_send_to_gnb(amf_ue_t *amf_ue, ogs_pkbuf_t *pkbuf)
 {
@@ -173,6 +174,11 @@ int nas_5gs_send_registration_accept(amf_ue_t *amf_ue)
             ogs_expect(rv == OGS_OK);
         }
     }
+
+    /* AMF_log: downlink RegistrationAccept at the SCTP write boundary
+     * (regardless of which of the three send paths above was taken). */
+    amf_accesslog_ngap("DL", "RegistrationAccept",
+            amf_ue->supi ? amf_ue->supi : amf_ue->suci, ogs_time_now());
 
     return rv;
 }
@@ -503,6 +509,12 @@ int nas_5gs_send_authentication_request(amf_ue_t *amf_ue)
 
     amf_metrics_inst_global_inc(AMF_METR_GLOB_CTR_AMF_AUTH_REQ);
 
+    /* AMF_log: downlink AuthenticationRequest. The send below is synchronous
+     * CPU work (build/encode) down to the SCTP write on this same thread, so
+     * the time here is an accurate SCTP write timestamp. */
+    amf_accesslog_ngap("DL", "AuthenticationRequest",
+            amf_ue->supi ? amf_ue->supi : amf_ue->suci, ogs_time_now());
+
     rv = nas_5gs_send_to_downlink_nas_transport(ran_ue, gmmbuf);
     ogs_expect(rv == OGS_OK);
 
@@ -579,6 +591,10 @@ int nas_5gs_send_security_mode_command(amf_ue_t *amf_ue)
     }
     ogs_timer_start(amf_ue->t3560.timer,
             amf_timer_cfg(AMF_TIMER_T3560)->duration);
+
+    /* AMF_log: downlink SecurityModeCommand at the SCTP write boundary. */
+    amf_accesslog_ngap("DL", "SecurityModeCommand",
+            amf_ue->supi ? amf_ue->supi : amf_ue->suci, ogs_time_now());
 
     rv = nas_5gs_send_to_downlink_nas_transport(ran_ue, gmmbuf);
     ogs_expect(rv == OGS_OK);

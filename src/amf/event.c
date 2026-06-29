@@ -81,7 +81,8 @@ const char *amf_event_get_name(amf_event_t *e)
 
 void amf_sctp_event_push(int id,
         void *sock, ogs_sockaddr_t *addr, ogs_pkbuf_t *pkbuf,
-        uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams)
+        uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams,
+        ogs_time_t recv_time)
 {
     amf_event_t *e = NULL;
     int rv;
@@ -99,6 +100,7 @@ void amf_sctp_event_push(int id,
     e->ngap.addr = addr;
     e->ngap.max_num_of_istreams = max_num_of_istreams;
     e->ngap.max_num_of_ostreams = max_num_of_ostreams;
+    e->ngap.recv_time = recv_time; /* used only for AMF_log on NGAP_MESSAGE */
 
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {

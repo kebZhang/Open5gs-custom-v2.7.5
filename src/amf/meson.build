@@ -21,6 +21,7 @@ libamf_sources = files('''
     context.c
     event.c
     timer.c
+    accesslog.c
 
     nausf-build.c
     nausf-handler.c

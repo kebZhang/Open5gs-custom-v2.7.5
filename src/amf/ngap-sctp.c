@@ -114,7 +114,7 @@ void ngap_accept_handler(ogs_sock_t *sock)
             OGS_ADDR(addr, buf), OGS_PORT(addr));
 
         ngap_event_push(AMF_EVENT_NGAP_LO_ACCEPT,
-                new, addr, NULL, 0, 0);
+                new, addr, NULL, 0, 0, 0);
     } else {
         ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno, "accept() failed");
     }
@@ -169,7 +169,7 @@ void ngap_recv_handler(ogs_sock_t *sock)
                     ngap_event_push(AMF_EVENT_NGAP_LO_SCTP_COMM_UP,
                             sock, addr, NULL,
                             not->sn_assoc_change.sac_inbound_streams,
-                            not->sn_assoc_change.sac_outbound_streams);
+                            not->sn_assoc_change.sac_outbound_streams, 0);
                 } else
                     ogs_error("Invalid sn_assoc_change.sac_outbound_streams %d",
                             not->sn_assoc_change.sac_outbound_streams);
@@ -186,7 +186,7 @@ void ngap_recv_handler(ogs_sock_t *sock)
                 memcpy(addr, &from, sizeof(ogs_sockaddr_t));
 
                 ngap_event_push(AMF_EVENT_NGAP_LO_CONNREFUSED,
-                        sock, addr, NULL, 0, 0);
+                        sock, addr, NULL, 0, 0, 0);
             }
             break;
         case SCTP_SHUTDOWN_EVENT :
@@ -199,7 +199,7 @@ void ngap_recv_handler(ogs_sock_t *sock)
             memcpy(addr, &from, sizeof(ogs_sockaddr_t));
 
             ngap_event_push(AMF_EVENT_NGAP_LO_CONNREFUSED,
-                    sock, addr, NULL, 0, 0);
+                    sock, addr, NULL, 0, 0, 0);
             break;
 
         case SCTP_SEND_FAILED :
@@ -234,13 +234,19 @@ void ngap_recv_handler(ogs_sock_t *sock)
             break;
         }
     } else if (flags & MSG_EOR) {
+        /* AMF_log: capture the SCTP read time as early as possible (memory
+         * only). It is carried in the event and only written to AMF_log later,
+         * once the NAS layer has confirmed the message type. */
+        ogs_time_t recv_time = ogs_time_now();
+
         ogs_pkbuf_trim(pkbuf, size);
 
         addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
         ogs_assert(addr);
         memcpy(addr, &from, sizeof(ogs_sockaddr_t));
 
-        ngap_event_push(AMF_EVENT_NGAP_MESSAGE, sock, addr, pkbuf, 0, 0);
+        ngap_event_push(AMF_EVENT_NGAP_MESSAGE, sock, addr, pkbuf, 0, 0,
+                recv_time);
         return;
     } else {
         if (ogs_socket_errno != OGS_EAGAIN) {

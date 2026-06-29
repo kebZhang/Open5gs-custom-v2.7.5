@@ -26,6 +26,7 @@
 #include "nas-security.h"
 #include "nas-path.h"
 #include "sbi-path.h"
+#include "accesslog.h"
 
 int ngap_open(void)
 {
@@ -265,6 +266,9 @@ int ngap_send_to_nas(ran_ue_t *ran_ue,
         e->ran_ue_id = ran_ue->id;
         e->ngap.code = procedureCode;
         e->nas.type = security_header_type.type;
+        /* AMF_log: carry the SCTP read time (stashed at NGAP dispatch) onto the
+         * new 5GMM event so the gmm-handler can attach it to the UL record. */
+        e->nas.recv_time = amf_recvtime_get();
         e->pkbuf = nasbuf;
         rv = ogs_queue_push(ogs_app()->queue, e);
         if (rv != OGS_OK) {
