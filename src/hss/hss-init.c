@@ -56,6 +56,8 @@ int hss_initialize(void)
     rv = ogs_dbi_init(ogs_app()->db_uri);
     if (rv != OGS_OK) return rv;
 
+    ogs_db_log_init("HSS");
+
     rv = hss_fd_init();
     if (rv != OGS_OK) return OGS_ERROR;
 
@@ -77,6 +79,7 @@ void hss_terminate(void)
 
     hss_fd_final();
 
+    ogs_db_log_final();
     ogs_dbi_final();
     hss_context_final();
     hss_event_final();

@@ -45,8 +45,14 @@ int ogs_dbi_update_imeisv(char *supi, char *imeisv);
 int ogs_dbi_update_mme(char *supi, char *mme_host, char *mme_realm,
     bool purge_flag);
 
+/*
+ * subresource: finer SBI/semantic tag for the DB_log so repeated reads of the
+ * same "subscriber" collection within one registration can be told apart
+ * (e.g. "am-data", "smf-selection-subscription-data", "am-policy"). Pass the
+ * SBI resource name from the calling handler, or NULL/"" if not applicable.
+ */
 int ogs_dbi_subscription_data(char *supi,
-        ogs_subscription_data_t *subscription_data);
+        ogs_subscription_data_t *subscription_data, const char *subresource);
 
 #ifdef __cplusplus
 }

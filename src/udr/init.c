@@ -47,6 +47,8 @@ int udr_initialize(void)
     rv = ogs_dbi_init(ogs_app()->db_uri);
     if (rv != OGS_OK) return rv;
 
+    ogs_db_log_init("UDR");
+
     rv = udr_sbi_open();
     if (rv != OGS_OK) return rv;
 
@@ -92,6 +94,8 @@ void udr_terminate(void)
     ogs_timer_delete(t_termination_holding);
 
     udr_sbi_close();
+
+    ogs_db_log_final();
 
     ogs_dbi_final();
 

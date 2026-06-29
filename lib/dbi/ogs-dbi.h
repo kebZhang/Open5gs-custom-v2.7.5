@@ -26,6 +26,7 @@
 #define OGS_DBI_INSIDE
 
 #include "dbi/ogs-mongoc.h"
+#include "dbi/db-log.h"
 #include "dbi/subscription.h"
 #include "dbi/session.h"
 #include "dbi/ims.h"

@@ -55,6 +55,8 @@ int pcrf_initialize(void)
     if (ogs_app()->db_uri) {
         rv = ogs_dbi_init(ogs_app()->db_uri);
         if (rv != OGS_OK) return rv;
+
+        ogs_db_log_init("PCRF");
     }
 
     rv = pcrf_fd_init();
@@ -79,6 +81,7 @@ void pcrf_terminate(void)
     pcrf_fd_final();
 
     if (ogs_app()->db_uri) {
+        ogs_db_log_final();
         ogs_dbi_final();
     }
 

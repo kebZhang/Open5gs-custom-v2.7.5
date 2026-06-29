@@ -477,7 +477,7 @@ int hss_db_subscription_data(
     supi = ogs_msprintf("%s-%s", OGS_ID_SUPI_TYPE_IMSI, imsi_bcd);
     ogs_assert(supi);
 
-    rv = ogs_dbi_subscription_data(supi, subscription_data);
+    rv = ogs_dbi_subscription_data(supi, subscription_data, "hss-lte");
 
     ogs_free(supi);
     ogs_thread_mutex_unlock(&self.db_lock);

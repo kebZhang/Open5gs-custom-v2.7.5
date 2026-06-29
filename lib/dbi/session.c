@@ -19,8 +19,8 @@
 
 #include "ogs-dbi.h"
 
-int ogs_dbi_session_data(char *supi, ogs_s_nssai_t *s_nssai, char *dnn,
-        ogs_session_data_t *session_data)
+static int ogs_dbi_session_data_impl(char *supi, ogs_s_nssai_t *s_nssai,
+        char *dnn, ogs_session_data_t *session_data)
 {
     int rv = OGS_OK;
     mongoc_cursor_t *cursor = NULL;
@@ -503,5 +503,16 @@ out:
     ogs_free(supi_type);
     ogs_free(supi_id);
 
+    return rv;
+}
+
+int ogs_dbi_session_data(char *supi, ogs_s_nssai_t *s_nssai, char *dnn,
+        ogs_session_data_t *session_data)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_session_data_impl(supi, s_nssai, dnn, session_data);
+    ogs_db_log_emit("subscriber", "session-management-subscription",
+            "GetOne", supi, req_time, ogs_time_now());
     return rv;
 }

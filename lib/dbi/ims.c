@@ -19,7 +19,7 @@
 
 #include "ogs-dbi.h"
 
-int ogs_dbi_msisdn_data(
+static int ogs_dbi_msisdn_data_impl(
         char *imsi_or_msisdn_bcd, ogs_msisdn_data_t *msisdn_data)
 {
     int rv = OGS_OK;
@@ -112,7 +112,18 @@ out:
     return rv;
 }
 
-int ogs_dbi_ims_data(char *supi, ogs_ims_data_t *ims_data)
+int ogs_dbi_msisdn_data(
+        char *imsi_or_msisdn_bcd, ogs_msisdn_data_t *msisdn_data)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_msisdn_data_impl(imsi_or_msisdn_bcd, msisdn_data);
+    ogs_db_log_emit("subscriber", "msisdn-data",
+            "GetOne", imsi_or_msisdn_bcd, req_time, ogs_time_now());
+    return rv;
+}
+
+static int ogs_dbi_ims_data_impl(char *supi, ogs_ims_data_t *ims_data)
 {
     int rv = OGS_OK;
     mongoc_cursor_t *cursor = NULL;
@@ -200,5 +211,15 @@ out:
     ogs_free(supi_type);
     ogs_free(supi_id);
 
+    return rv;
+}
+
+int ogs_dbi_ims_data(char *supi, ogs_ims_data_t *ims_data)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_ims_data_impl(supi, ims_data);
+    ogs_db_log_emit("subscriber", "ims-data",
+            "GetOne", supi, req_time, ogs_time_now());
     return rv;
 }

@@ -19,7 +19,7 @@
 
 #include "ogs-dbi.h"
 
-int ogs_dbi_auth_info(char *supi, ogs_dbi_auth_info_t *auth_info)
+static int ogs_dbi_auth_info_impl(char *supi, ogs_dbi_auth_info_t *auth_info)
 {
     int rv = OGS_OK;
     mongoc_cursor_t *cursor = NULL;
@@ -126,7 +126,17 @@ out:
     return rv;
 }
 
-int ogs_dbi_update_sqn(char *supi, uint64_t sqn)
+int ogs_dbi_auth_info(char *supi, ogs_dbi_auth_info_t *auth_info)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_auth_info_impl(supi, auth_info);
+    ogs_db_log_emit("subscriber", "authentication-subscription",
+            "GetOne", supi, req_time, ogs_time_now());
+    return rv;
+}
+
+static int ogs_dbi_update_sqn_impl(char *supi, uint64_t sqn)
 {
     int rv = OGS_OK;
     bson_t *query = NULL;
@@ -165,7 +175,17 @@ int ogs_dbi_update_sqn(char *supi, uint64_t sqn)
     return rv;
 }
 
-int ogs_dbi_update_imeisv(char *supi, char *imeisv)
+int ogs_dbi_update_sqn(char *supi, uint64_t sqn)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_update_sqn_impl(supi, sqn);
+    ogs_db_log_emit("subscriber", "authentication-status",
+            "UpdateSqn", supi, req_time, ogs_time_now());
+    return rv;
+}
+
+static int ogs_dbi_update_imeisv_impl(char *supi, char *imeisv)
 {
     int rv = OGS_OK;
     bson_t *query = NULL;
@@ -206,7 +226,17 @@ int ogs_dbi_update_imeisv(char *supi, char *imeisv)
     return rv;
 }
 
-int ogs_dbi_update_mme(char *supi, char *mme_host, char *mme_realm,
+int ogs_dbi_update_imeisv(char *supi, char *imeisv)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_update_imeisv_impl(supi, imeisv);
+    ogs_db_log_emit("subscriber", "amf-3gpp-access",
+            "UpdateImeisv", supi, req_time, ogs_time_now());
+    return rv;
+}
+
+static int ogs_dbi_update_mme_impl(char *supi, char *mme_host, char *mme_realm,
     bool purge_flag)
 {
     int rv = OGS_OK;
@@ -251,7 +281,18 @@ int ogs_dbi_update_mme(char *supi, char *mme_host, char *mme_realm,
     return rv;
 }
 
-int ogs_dbi_increment_sqn(char *supi)
+int ogs_dbi_update_mme(char *supi, char *mme_host, char *mme_realm,
+    bool purge_flag)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_update_mme_impl(supi, mme_host, mme_realm, purge_flag);
+    ogs_db_log_emit("subscriber", "mme",
+            "UpdateMme", supi, req_time, ogs_time_now());
+    return rv;
+}
+
+static int ogs_dbi_increment_sqn_impl(char *supi)
 {
     int rv = OGS_OK;
     bson_t *query = NULL;
@@ -305,7 +346,17 @@ out:
     return rv;
 }
 
-int ogs_dbi_subscription_data(char *supi,
+int ogs_dbi_increment_sqn(char *supi)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_increment_sqn_impl(supi);
+    ogs_db_log_emit("subscriber", "authentication-status",
+            "IncrementSqn", supi, req_time, ogs_time_now());
+    return rv;
+}
+
+static int ogs_dbi_subscription_data_impl(char *supi,
         ogs_subscription_data_t *subscription_data)
 {
     int rv = OGS_OK;
@@ -829,5 +880,17 @@ out:
     ogs_free(supi_type);
     ogs_free(supi_id);
 
+    return rv;
+}
+
+int ogs_dbi_subscription_data(char *supi,
+        ogs_subscription_data_t *subscription_data, const char *subresource)
+{
+    int rv;
+    ogs_time_t req_time = ogs_time_now();
+    rv = ogs_dbi_subscription_data_impl(supi, subscription_data);
+    ogs_db_log_emit("subscriber",
+            (subresource && *subresource) ? subresource : "provisioned-data",
+            "GetOne", supi, req_time, ogs_time_now());
     return rv;
 }

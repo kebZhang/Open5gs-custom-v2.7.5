@@ -55,6 +55,8 @@ int pcf_initialize(void)
     if (ogs_app()->db_uri) {
         rv = ogs_dbi_init(ogs_app()->db_uri);
         if (rv != OGS_OK) return rv;
+
+        ogs_db_log_init("PCF");
     }
 
     rv = pcf_sbi_open();
@@ -106,6 +108,7 @@ void pcf_terminate(void)
     ogs_metrics_context_close(ogs_metrics_self());
 
     if (ogs_app()->db_uri) {
+        ogs_db_log_final();
         ogs_dbi_final();
     }
 

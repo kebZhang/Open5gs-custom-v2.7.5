@@ -451,7 +451,8 @@ bool udr_nudr_dr_handle_subscription_provisioned(
         goto cleanup;
     }
 
-    rv = ogs_dbi_subscription_data(supi, &subscription_data);
+    rv = ogs_dbi_subscription_data(supi, &subscription_data,
+            recvmsg->h.resource.component[4]);
     if (rv != OGS_OK) {
         strerror = ogs_msprintf("[%s] Cannot find SUPI in DB", supi);
         status = OGS_SBI_HTTP_STATUS_NOT_FOUND;
@@ -1132,7 +1133,8 @@ bool udr_nudr_dr_handle_policy_data(
         CASE(OGS_SBI_HTTP_METHOD_GET)
             OpenAPI_lnode_t *node = NULL, *node2 = NULL;
 
-            rv = ogs_dbi_subscription_data(supi, &subscription_data);
+            rv = ogs_dbi_subscription_data(supi, &subscription_data,
+                    recvmsg->h.resource.component[3]);
             if (rv != OGS_OK) {
                 strerror = ogs_msprintf("[%s] Cannot find SUPI in DB", supi);
                 status = OGS_SBI_HTTP_STATUS_NOT_FOUND;

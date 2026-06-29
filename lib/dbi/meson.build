@@ -19,8 +19,10 @@ libdbi_sources = files('''
     ogs-dbi.h
 
     ogs-mongoc.h
+    db-log.h
 
     ogs-mongoc.c
+    db-log.c
     subscription.c
     session.c
     ims.c
