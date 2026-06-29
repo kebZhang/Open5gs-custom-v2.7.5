@@ -32,6 +32,10 @@
 
 #define DB_LOG_FLUSH_INTERVAL   ogs_time_from_msec(200)
 
+/* Size of the stdio full-buffer for the writer's FILE* (see setvbuf in init).
+ * Large enough that whole records are batched between explicit flushes. */
+#define DB_LOG_STREAM_BUF       (1 * 1024 * 1024) /* 1 MiB (DB volume << HTTP) */
+
 typedef struct db_log_slot_s {
     int len;
     char line[DB_LOG_LINE_MAX];
@@ -53,9 +57,11 @@ static struct {
     bool stop;
 
     FILE *fp;
+    char *log_buf;               /* stdio full-buffer backing self.fp */
     char *path;
 
-    uint64_t dropped;
+    uint64_t dropped;       /* producer side: ring full / oversize (under mutex) */
+    uint64_t write_errors;  /* writer side: hard write errors (writer thread only) */
 } self;
 
 /* ------------------------------------------------------------------ */
@@ -135,7 +141,31 @@ static void writer_main(void *data)
         ogs_thread_mutex_unlock(&self.mutex);
 
         if (have && self.fp) {
-            fwrite(slot.line, 1, slot.len, self.fp);
+            /* Write the whole line or drop it -- never leave a partial line in
+             * the file. fwrite() can return a short count if interrupted by a
+             * signal or on a partial underlying write; without this loop the
+             * tail of the record is silently lost and the next record is
+             * appended right after the truncated prefix, producing a torn line.
+             * Loop until the full slot.len bytes are written. This runs only on
+             * the background writer thread, so it never adds latency to the NF
+             * event loop / UE registration. */
+            size_t off = 0;
+            while (off < (size_t)slot.len) {
+                size_t n = fwrite(slot.line + off, 1,
+                        (size_t)slot.len - off, self.fp);
+                if (n == 0) {
+                    /* Hard write error (not a short write): drop the whole line
+                     * (keeps the JSON-Lines stream valid) and count it. */
+                    if (ferror(self.fp)) {
+                        clearerr(self.fp);
+                        /* writer-thread-only counter: no mutex needed, never
+                         * touched by the producer hot path */
+                        self.write_errors++;
+                    }
+                    break;
+                }
+                off += n;
+            }
         }
 
         if (self.fp) {
@@ -182,6 +212,18 @@ void ogs_db_log_init(const char *nf_name)
         return;
     }
 
+    /* Give the stream a large fully-buffered block. We flush explicitly every
+     * DB_LOG_FLUSH_INTERVAL on the writer thread, so a big block reduces syscalls
+     * and makes it far less likely that a record's bytes straddle a buffer
+     * boundary and get split across two underlying write()s (a torn-line source).
+     * This buffer lives on the writer thread's FILE* only; the NF event loop
+     * never touches it. */
+    if (self.log_buf)
+        free(self.log_buf);
+    self.log_buf = malloc(DB_LOG_STREAM_BUF);
+    if (self.log_buf)
+        setvbuf(self.fp, self.log_buf, _IOFBF, DB_LOG_STREAM_BUF);
+
     /* Long-lived ~0.5 GiB block allocated once. Use libc calloc(), not
      * ogs_calloc(): open5gs' talloc pool rejects a block this large, which would
      * leave the logger un-inited (empty DB_log.txt). malloc has no such cap. */
@@ -224,8 +266,13 @@ void ogs_db_log_final(void)
 
     if (self.fp) {
         fflush(self.fp);
-        fclose(self.fp);
+        fclose(self.fp); /* flushes & detaches the setvbuf buffer */
         self.fp = NULL;
+    }
+
+    if (self.log_buf) {
+        free(self.log_buf); /* safe: freed only after fclose detached it */
+        self.log_buf = NULL;
     }
 
     if (self.ring) {
@@ -236,9 +283,12 @@ void ogs_db_log_final(void)
     ogs_thread_cond_destroy(&self.cond);
     ogs_thread_mutex_destroy(&self.mutex);
 
-    if (self.dropped)
-        ogs_warn("ogs_db_log_final: dropped %llu records",
-                (unsigned long long)self.dropped);
+    if (self.dropped || self.write_errors)
+        ogs_warn("ogs_db_log_final: dropped %llu records "
+                "(ring-full %llu, write-error %llu)",
+                (unsigned long long)(self.dropped + self.write_errors),
+                (unsigned long long)self.dropped,
+                (unsigned long long)self.write_errors);
 
     if (self.path) {
         ogs_free(self.path);
@@ -250,7 +300,7 @@ void ogs_db_log_final(void)
 
 uint64_t ogs_db_log_dropped(void)
 {
-    return self.dropped;
+    return self.dropped + self.write_errors;
 }
 
 void ogs_db_log_emit(const char *resource, const char *subresource,

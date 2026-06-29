@@ -36,6 +36,10 @@
 
 #define HTTP_LOG_FLUSH_INTERVAL ogs_time_from_msec(200)
 
+/* Size of the stdio full-buffer for the writer's FILE* (see setvbuf in init).
+ * Large enough that whole records are batched between explicit flushes. */
+#define HTTP_LOG_STREAM_BUF     (4 * 1024 * 1024) /* 4 MiB */
+
 typedef struct http_log_slot_s {
     int len;
     char line[HTTP_LOG_LINE_MAX];
@@ -55,9 +59,11 @@ static struct {
     bool stop;
 
     FILE *fp;
+    char *log_buf;               /* stdio full-buffer backing self.fp */
     char *path;
 
-    uint64_t dropped;
+    uint64_t dropped;       /* producer side: ring full / oversize (under mutex) */
+    uint64_t write_errors;  /* writer side: hard write errors (writer thread only) */
 } self;
 
 /* ------------------------------------------------------------------ */
@@ -192,7 +198,34 @@ static void writer_main(void *data)
         ogs_thread_mutex_unlock(&self.mutex);
 
         if (have && self.fp) {
-            fwrite(slot.line, 1, slot.len, self.fp);
+            /* Write the whole line or drop it -- never leave a partial line in
+             * the file. fwrite() can return a short count if interrupted by a
+             * signal or on a partial underlying write; without this loop the
+             * tail of the record is silently lost and the next record is
+             * appended right after the truncated prefix, producing a torn line
+             * (e.g. {"event":"R{"event":...). Loop until the full slot.len bytes
+             * are written. This runs only on the background writer thread, so it
+             * never adds latency to the NF event loop / UE registration. */
+            size_t off = 0;
+            while (off < (size_t)slot.len) {
+                size_t n = fwrite(slot.line + off, 1,
+                        (size_t)slot.len - off, self.fp);
+                if (n == 0) {
+                    /* Hard write error (not a short write): give up on this
+                     * line, count it, and resync to the next record boundary.
+                     * Dropping a whole line keeps the JSON-Lines stream valid
+                     * (offline parser skips one line) rather than corrupting it
+                     * with a partial record. */
+                    if (ferror(self.fp)) {
+                        clearerr(self.fp);
+                        /* writer-thread-only counter: no mutex needed, never
+                         * touched by the producer hot path */
+                        self.write_errors++;
+                    }
+                    break;
+                }
+                off += n;
+            }
         }
 
         if (self.fp) {
@@ -235,6 +268,18 @@ void ogs_http_log_init(void)
         self.path = NULL;
         return;
     }
+
+    /* Give the stream a large fully-buffered block. We flush explicitly every
+     * HTTP_LOG_FLUSH_INTERVAL on the writer thread, so line/no buffering would
+     * only add syscalls. A big block also makes it far less likely that a single
+     * record's bytes straddle a buffer boundary and get split across two
+     * underlying write()s (a source of torn lines). This buffer lives on the
+     * writer thread's FILE* only and never touches the NF event loop. */
+    if (self.log_buf)
+        free(self.log_buf);
+    self.log_buf = malloc(HTTP_LOG_STREAM_BUF);
+    if (self.log_buf)
+        setvbuf(self.fp, self.log_buf, _IOFBF, HTTP_LOG_STREAM_BUF);
 
     /* The ring is a single ~1 GiB long-lived block allocated once at startup.
      * Use the libc allocator, not ogs_calloc(): open5gs' talloc pool rejects a
@@ -279,8 +324,13 @@ void ogs_http_log_final(void)
 
     if (self.fp) {
         fflush(self.fp);
-        fclose(self.fp);
+        fclose(self.fp); /* flushes & detaches the setvbuf buffer */
         self.fp = NULL;
+    }
+
+    if (self.log_buf) {
+        free(self.log_buf); /* safe: freed only after fclose detached it */
+        self.log_buf = NULL;
     }
 
     if (self.ring) {
@@ -291,9 +341,12 @@ void ogs_http_log_final(void)
     ogs_thread_cond_destroy(&self.cond);
     ogs_thread_mutex_destroy(&self.mutex);
 
-    if (self.dropped)
-        ogs_warn("ogs_http_log_final: dropped %llu records",
-                (unsigned long long)self.dropped);
+    if (self.dropped || self.write_errors)
+        ogs_warn("ogs_http_log_final: dropped %llu records "
+                "(ring-full %llu, write-error %llu)",
+                (unsigned long long)(self.dropped + self.write_errors),
+                (unsigned long long)self.dropped,
+                (unsigned long long)self.write_errors);
 
     if (self.path) {
         ogs_free(self.path);
@@ -305,7 +358,7 @@ void ogs_http_log_final(void)
 
 uint64_t ogs_http_log_dropped(void)
 {
-    return self.dropped;
+    return self.dropped + self.write_errors;
 }
 
 void ogs_http_log_request(const char *event,
