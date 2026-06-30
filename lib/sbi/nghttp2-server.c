@@ -83,11 +83,6 @@ typedef struct ogs_sbi_session_s {
 
     nghttp2_session         *session;
     ogs_list_t              write_queue;
-    /* TYcustom: live depth of write_queue, maintained incrementally on every
-     * add/remove so a sample is O(1) (no list walk). pkbuf count + total bytes
-     * of pkbufs currently parked on write_queue awaiting POLLOUT flush. */
-    int                     write_queue_pkt_count;
-    int64_t                 write_queue_byte_count;
 
     ogs_sbi_server_t        *server;
     ogs_list_t              stream_list;
@@ -723,40 +718,9 @@ static bool server_send_rspmem_persistent(
 
     if (session_send(sbi_sess) != OGS_OK) {
         ogs_error("session_send() failed");
-        /* TYcustom: log RSP_TX before session_remove() frees the session. The
-         * send failed, so the bytes did not leave; flag wq = -1 to mark it. */
-        if (stream->request) {
-            stream->request->tycustom_lat.wq_pkt = -1;
-            stream->request->tycustom_lat.wq_bytes = -1;
-        }
-        ogs_http_log_rsp_tx(response, stream->request, -1);
         session_remove(sbi_sess);
         ogs_free(nva);
         return true;
-    }
-
-    /* TYcustom: RSP_TX -- emitted here (AFTER session_send) so the line carries
-     * the userspace write_queue depth after HTTP/2 serialization. In this build
-     * session_send() calls nghttp2_session_mem_send() and appends the resulting
-     * pkbuf(s) to sbi_sess->write_queue; it does not write them to the socket.
-     * The real ogs_send()/SSL_write() runs later under OGS_POLLOUT. Therefore
-     * wq includes this response's own pkbuf(s), plus any older queued output; it
-     * is not a count of bytes rejected by the kernel.
-     * stream->request is alive (freed only at stream teardown); it carries the
-     * (method, uri-path) the offline step keys RSP_TX on. */
-    {
-        /* TYcustom: read the live userspace write_queue depth (maintained
-         * incrementally on every enqueue/dequeue, so this is O(1) -- no list
-         * walk) and stash it on the request so the udr-lat-log emit (at t5,
-         * server.c) can append it to the same 5-timestamp line. This sample is
-         * taken before the later POLLOUT socket write. */
-        int wq = sbi_sess->write_queue_pkt_count;
-        if (stream->request) {
-            stream->request->tycustom_lat.wq_pkt = wq;
-            stream->request->tycustom_lat.wq_bytes =
-                sbi_sess->write_queue_byte_count;
-        }
-        ogs_http_log_rsp_tx(response, stream->request, wq);
     }
 
     ogs_free(nva);
@@ -1822,10 +1786,6 @@ static void session_write_callback(short when, ogs_socket_t fd, void *data)
     pkbuf = ogs_list_first(&sbi_sess->write_queue);
     ogs_assert(pkbuf);
     ogs_list_remove(&sbi_sess->write_queue, pkbuf);
-    /* TYcustom: keep the live write_queue depth in sync on dequeue (this is the
-     * "pkbuf decreasing" path: one pkbuf flushed to the kernel per POLLOUT). */
-    sbi_sess->write_queue_pkt_count--;
-    sbi_sess->write_queue_byte_count -= pkbuf->len;
 
     if (sbi_sess->ssl)
         SSL_write(sbi_sess->ssl, pkbuf->data, pkbuf->len);
@@ -1852,9 +1812,6 @@ static void session_write_to_buffer(
     ogs_assert(fd != INVALID_SOCKET);
 
     ogs_list_add(&sbi_sess->write_queue, pkbuf);
-    /* TYcustom: keep the live write_queue depth in sync on enqueue. */
-    sbi_sess->write_queue_pkt_count++;
-    sbi_sess->write_queue_byte_count += pkbuf->len;
 
     if (!sbi_sess->poll.write) {
         sbi_sess->poll.write = ogs_pollset_add(ogs_app()->pollset,

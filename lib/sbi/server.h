@@ -114,16 +114,36 @@ void *ogs_sbi_stream_find_by_id(ogs_pool_id_t id);
 ogs_sbi_request_t *ogs_sbi_request_from_stream(ogs_sbi_stream_t *stream);
 
 /*
- * TYcustom (UDR per-request latency): optional hook invoked on the event-loop
- * thread by ogs_sbi_server_send_response() RIGHT AFTER the response has
+ * TYcustom (UDR per-request latency): immutable request snapshot prepared
+ * BEFORE the transport serializes the response. nghttp2_session_mem_send() can
+ * synchronously invoke on_stream_close(), which frees the stream and request,
+ * so no request pointer may cross that call.
+ */
+#define OGS_SBI_RESPONSE_SNAPSHOT_SRC_LEN     64
+#define OGS_SBI_RESPONSE_SNAPSHOT_METHOD_LEN  16
+#define OGS_SBI_RESPONSE_SNAPSHOT_URI_LEN     768
+
+typedef struct ogs_sbi_response_snapshot_s {
+    bool valid;
+    char src[OGS_SBI_RESPONSE_SNAPSHOT_SRC_LEN];
+    char method[OGS_SBI_RESPONSE_SNAPSHOT_METHOD_LEN];
+    char uri[OGS_SBI_RESPONSE_SNAPSHOT_URI_LEN];
+    ogs_time_t t1_enq;
+    ogs_time_t t2_deq;
+    ogs_time_t t3_db_req;
+    ogs_time_t t4_db_rsp;
+} ogs_sbi_response_snapshot_t;
+
+/*
+ * Optional hook invoked on the event-loop thread RIGHT AFTER the response has
  * completed HTTP/2 serialization and been appended to the connection's
  * userspace write_queue (the "t5" instant). The real socket write occurs later
- * in the POLLOUT callback. 'request' is the originating server request (may be
- * NULL); 't5_tx' is ogs_time_now() captured at this enqueue boundary. The hook
- * MUST NOT perform file I/O (UDR's impl formats a line into an async ring).
- * NULL (the default) disables it. Register from udr init via this setter. */
+ * in the POLLOUT callback. The callback receives only the pre-send snapshot,
+ * never the possibly-freed stream/request. It MUST NOT perform file I/O.
+ * NULL (the default) disables it. Register from UDR init via this setter.
+ */
 typedef void (*ogs_sbi_response_sent_cb_f)(
-        ogs_sbi_request_t *request, ogs_time_t t5_tx);
+        const ogs_sbi_response_snapshot_t *snapshot, ogs_time_t t5_tx);
 void ogs_sbi_server_set_response_sent_cb(ogs_sbi_response_sent_cb_f cb);
 
 ogs_sbi_server_t *ogs_sbi_server_first(void);

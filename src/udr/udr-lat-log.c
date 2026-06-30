@@ -28,8 +28,7 @@
  */
 #define UDR_LAT_LOG_RING_SLOTS      (1 << 18)
 /* One line carries 4 fixed fields + 5 timestamps (~28 B each) + a long
- * nudr-dr URI (~160 B) + 2 write_queue depth ints (~40 B). ~560 B worst case;
- * 1024 still gives ~1.8x headroom.
+ * nudr-dr URI (~160 B). 1024 B leaves ample headroom for current UDR paths.
  * ogs_snprintf() returns the would-be length, so an oversize line is dropped
  * (not written truncated) to keep the JSON-Lines stream valid. */
 #define UDR_LAT_LOG_LINE_MAX        1024
@@ -68,20 +67,6 @@ static struct {
 /* ------------------------------------------------------------------ */
 /* helpers (run on the event-loop thread; all in-memory, no I/O)       */
 /* ------------------------------------------------------------------ */
-
-/*
- * Derive the source NF name (the NF that sent this request to UDR) from the
- * request's User-Agent header, which open5gs sets to the requester NF type
- * (e.g. "UDM"). Returns "" if absent. UDR's direct callers are UDM (nudr-dr)
- * and, for nf-status-notify, NRF.
- */
-static const char *src_nf_from_request(ogs_sbi_request_t *request)
-{
-    const char *ua = NULL;
-    if (request && request->http.headers)
-        ua = ogs_sbi_header_get(request->http.headers, OGS_SBI_USER_AGENT);
-    return ua ? ua : "";
-}
 
 /* "YYYY-MM-DDTHH:MM:SS.ffffffZ" from an ogs_time_t (GMT epoch usec).
  * An unset time (0) yields an empty string. */
@@ -312,38 +297,31 @@ uint64_t udr_lat_log_dropped(void)
     return self.dropped + self.write_errors;
 }
 
-void udr_lat_log_emit(ogs_sbi_request_t *request, ogs_time_t t5_tx)
+void udr_lat_log_emit(
+        const ogs_sbi_response_snapshot_t *snapshot, ogs_time_t t5_tx)
 {
     char ts1[40], ts2[40], ts3[40], ts4[40], ts5[40];
     char line[UDR_LAT_LOG_LINE_MAX];
     int len;
 
-    if (!self.inited || !request)
+    if (!self.inited || !snapshot || !snapshot->valid)
         return;
 
-    /* Only requests that actually hit the DB are logged (t3 set on first
-     * ogs_dbi_* call). Skips NRF nf-status-notify and 4xx error paths that
-     * never reach MongoDB. */
-    if (request->tycustom_lat.t3_db_req == 0)
+    if (snapshot->t3_db_req == 0)
         return;
 
-    format_ts(request->tycustom_lat.t1_enq, ts1, sizeof(ts1));
-    format_ts(request->tycustom_lat.t2_deq, ts2, sizeof(ts2));
-    format_ts(request->tycustom_lat.t3_db_req, ts3, sizeof(ts3));
-    format_ts(request->tycustom_lat.t4_db_rsp, ts4, sizeof(ts4));
+    format_ts(snapshot->t1_enq, ts1, sizeof(ts1));
+    format_ts(snapshot->t2_deq, ts2, sizeof(ts2));
+    format_ts(snapshot->t3_db_req, ts3, sizeof(ts3));
+    format_ts(snapshot->t4_db_rsp, ts4, sizeof(ts4));
     format_ts(t5_tx, ts5, sizeof(ts5));
 
     len = ogs_snprintf(line, sizeof(line),
             "{\"src\":\"%s\",\"dst\":\"UDR\",\"method\":\"%s\",\"uri\":\"%s\","
             "\"t1_enq\":\"%s\",\"t2_deq\":\"%s\",\"t3_db_req\":\"%s\","
-            "\"t4_db_rsp\":\"%s\",\"t5_tx\":\"%s\","
-            "\"wq_pkt\":%d,\"wq_bytes\":%lld}\n",
-            src_nf_from_request(request),
-            request->h.method ? request->h.method : "",
-            request->h.uri ? request->h.uri : "",
-            ts1, ts2, ts3, ts4, ts5,
-            request->tycustom_lat.wq_pkt,
-            (long long)request->tycustom_lat.wq_bytes);
+            "\"t4_db_rsp\":\"%s\",\"t5_tx\":\"%s\"}\n",
+            snapshot->src, snapshot->method, snapshot->uri,
+            ts1, ts2, ts3, ts4, ts5);
 
     ring_push(line, len);
 }

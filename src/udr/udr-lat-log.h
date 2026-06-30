@@ -19,18 +19,6 @@
  *               (lib/sbi/server.c, after server_send_response returns).
  *               The real socket write happens later in the POLLOUT callback.
  *
- * Plus two write_queue depth samples, taken at the moment this request's HTTP/2
- * response was encoded into pkbuf(s) and added to the connection's userspace
- * write_queue (lib/sbi/nghttp2-server.c, right after session_send()):
- *
- *   wq_pkt    : number of pkbuf nodes on the connection write_queue then
- *   wq_bytes  : total bytes across those pkbufs (sum of pkbuf->len)
- *
- * Both are -1 if not sampled (e.g. the send-failure path). In this build
- * session_send() only enqueues (the real send happens later under POLLOUT), so
- * wq_pkt always includes this response's own pkbuf(s): it is an egress backlog
- * depth, not a kernel back-pressure remainder.
- *
  * CORE REQUIREMENT: logging must NOT add latency to the request it measures.
  * UDR is a single event-loop thread; the five capture points and the emit point
  * all run on that thread, so they must never block. They only: read
@@ -62,14 +50,15 @@ void udr_lat_log_final(void);
 
 /*
  * Emit one UDR_log line for a request that hit the DB.
- *   request : the inbound server request carrying t1..t4 in tycustom_lat;
- *             may be NULL (then nothing is emitted).
+ *   snapshot: immutable copy of request identity and t1..t4, captured before
+ *             nghttp2 serialization so it remains valid if the stream closes.
  *   t5_tx   : ogs_time_now() captured after HTTP/2 serialization/userspace
  *             write_queue enqueue, before the later POLLOUT socket write.
  * No-op (nothing emitted) unless t3_db_req was set, i.e. the request actually
  * issued at least one DB call. All work is in-memory; never blocks on I/O.
  */
-void udr_lat_log_emit(ogs_sbi_request_t *request, ogs_time_t t5_tx);
+void udr_lat_log_emit(
+        const ogs_sbi_response_snapshot_t *snapshot, ogs_time_t t5_tx);
 
 /* Number of records dropped because the ring was full (0 == writer keeps up). */
 uint64_t udr_lat_log_dropped(void);

@@ -413,18 +413,9 @@ static bool server_send_rspmem_persistent(
         ogs_error("MHD_queue_response failed [%d]", ret);
         MHD_destroy_response(mhd_response);
         ogs_pollset_remove(request->poll.write);
-        /* TYcustom: RSP_TX -- send failed; wq = -1 marks "bytes did not leave".
-         * (libmicrohttpd path: no NF write_queue, so wq is otherwise 0.) */
-        ogs_http_log_rsp_tx(response, request, -1);
         return false;
     }
     MHD_destroy_response(mhd_response);
-
-    /* TYcustom: RSP_TX -- libmicrohttpd owns its own output buffering and there
-     * is no NF-level write_queue here, so wq is reported as 0 (no NF egress
-     * back-pressure signal available on the HTTP/1.1 / MHD path). In the K8s
-     * deployment NFs use the HTTP/2 (nghttp2) path, where wq is meaningful. */
-    ogs_http_log_rsp_tx(response, request, 0);
 
     return true;
 }

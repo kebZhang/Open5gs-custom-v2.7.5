@@ -229,11 +229,6 @@ ogs_sbi_request_t *ogs_sbi_request_new(void)
     }
     memset(request, 0, sizeof(ogs_sbi_request_t));
 
-    /* TYcustom: -1 == "write_queue depth not sampled" (memset 0 would be a
-     * valid "empty queue" reading). The nghttp2 send path overwrites these. */
-    request->tycustom_lat.wq_pkt = -1;
-    request->tycustom_lat.wq_bytes = -1;
-
     request->http.params = ogs_hash_make();
     if (!request->http.params) {
         ogs_error("ogs_hash_make() failed");

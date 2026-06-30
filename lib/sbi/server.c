@@ -192,28 +192,57 @@ bool ogs_sbi_server_send_response(
         ogs_sbi_stream_t *stream, ogs_sbi_response_t *response)
 {
     bool rc;
-    ogs_sbi_request_t *request;
+    ogs_sbi_request_t *request = NULL;
+    ogs_sbi_response_snapshot_t snapshot;
+    const char *src = NULL;
+    int n;
 
-    /* Resolve the originating request BEFORE the send: send_response() frees
-     * the response. The t5 hook below uses the originating request after the
-     * transport action returns. */
+    /*
+     * Resolve and consume every request field BEFORE the transport send.
+     * nghttp2_session_mem_send() may synchronously close the stream and free
+     * both stream and request.
+     */
     request = ogs_sbi_request_from_stream(stream);
 
-    /* TYcustom: RSP_TX is emitted INSIDE the nghttp2 send path
-     * (server_send_rspmem_persistent), AFTER session_send(), so that the line
-     * can carry the post-flush session write_queue depth ("wq"). Emitting it
-     * here (before the send) could not observe whether the response actually
-     * back-ed up on the NF. The send path has the response + stream->request +
-     * the session, so it logs the same (method, uri-path) key as before. */
+    /* TYcustom: RSP_TX does not record write_queue state. Emit before send so
+     * request lifetime is guaranteed for method/URI/User-Agent extraction. */
+    ogs_http_log_rsp_tx(response, request);
+
+    memset(&snapshot, 0, sizeof(snapshot));
+    if (ogs_sbi_response_sent_cb && request &&
+            request->tycustom_lat.t3_db_req != 0) {
+        snapshot.t1_enq = request->tycustom_lat.t1_enq;
+        snapshot.t2_deq = request->tycustom_lat.t2_deq;
+        snapshot.t3_db_req = request->tycustom_lat.t3_db_req;
+        snapshot.t4_db_rsp = request->tycustom_lat.t4_db_rsp;
+
+        if (request->http.headers)
+            src = ogs_sbi_header_get(
+                    request->http.headers, OGS_SBI_USER_AGENT);
+
+        n = ogs_snprintf(snapshot.src, sizeof(snapshot.src), "%s",
+                src ? src : "");
+        snapshot.valid = n >= 0 && n < (int)sizeof(snapshot.src);
+
+        n = ogs_snprintf(snapshot.method, sizeof(snapshot.method), "%s",
+                request->h.method ? request->h.method : "");
+        snapshot.valid = snapshot.valid &&
+            n >= 0 && n < (int)sizeof(snapshot.method);
+
+        n = ogs_snprintf(snapshot.uri, sizeof(snapshot.uri), "%s",
+                request->h.uri ? request->h.uri : "");
+        snapshot.valid = snapshot.valid &&
+            n >= 0 && n < (int)sizeof(snapshot.uri);
+    }
+
     rc = ogs_sbi_server_actions.send_response(stream, response);
 
-    /* TYcustom (UDR per-request latency): t5 -- HTTP/2 submit + session_send
-     * have serialized the response and appended its pkbuf(s) to the connection's
-     * userspace write_queue. No socket write is implied here; ogs_send() or
-     * SSL_write() runs later in the POLLOUT callback. Invoke the registered hook
-     * (UDR only; NULL elsewhere) to emit the combined 5-timestamp line. */
-    if (ogs_sbi_response_sent_cb)
-        ogs_sbi_response_sent_cb(request, ogs_time_now());
+    /*
+     * t5 remains after HTTP/2 serialization/userspace-queue insertion. Only
+     * the stack snapshot is used here; stream/request may already be freed.
+     */
+    if (ogs_sbi_response_sent_cb && snapshot.valid)
+        ogs_sbi_response_sent_cb(&snapshot, ogs_time_now());
 
     return rc;
 }
