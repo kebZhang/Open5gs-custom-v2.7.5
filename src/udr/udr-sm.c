@@ -19,6 +19,7 @@
 
 #include "sbi-path.h"
 #include "nudr-handler.h"
+#include "udr-lat-log.h"
 
 void udr_state_initial(ogs_fsm_t *s, udr_event_t *e)
 {
@@ -63,6 +64,10 @@ void udr_state_operational(ogs_fsm_t *s, udr_event_t *e)
     case OGS_EVENT_SBI_SERVER:
         request = e->h.sbi.request;
         ogs_assert(request);
+
+        /* TYcustom (UDR per-request latency): t2 = the moment this request is
+         * popped from the event queue and dispatched on the UDR worker. */
+        request->tycustom_lat.t2_deq = ogs_time_now();
 
         stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
         ogs_assert(stream_id >= OGS_MIN_POOL_ID &&

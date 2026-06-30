@@ -604,6 +604,49 @@ typedef struct ogs_sbi_request_s {
     struct {
         ogs_poll_t *write;
     } poll;
+
+    /*
+     * TYcustom (UDR per-request latency instrumentation).
+     *
+     * Five lifecycle timestamps for one inbound HTTP request, all captured on
+     * the UDR event-loop thread and carried on this struct (the only object
+     * carried from ogs_sbi_server_handler() to
+     * ogs_sbi_server_send_response()). They are emitted as ONE line by the
+     * udr-lat-log writer at t5.
+     * All in GMT epoch microseconds (ogs_time_now()); 0 == not set.
+     *
+     *   t1_enq : pushed onto the NF event queue   (path.c, before queue_push)
+     *   t2_deq : popped & dispatched              (udr-sm.c, SBI_SERVER entry)
+     *   t3_db_req : before the FIRST mongoc call  (nudr-handler.c)
+     *   t4_db_rsp : after the LAST mongoc call     (nudr-handler.c)
+     *   t5_tx  : after HTTP/2 serialization and userspace write_queue enqueue;
+     *            the real socket write occurs later under POLLOUT (server.c)
+     *
+     * In addition, two write_queue depth samples taken at the moment this
+     * request's HTTP/2 response has just been encoded into pkbuf(s) and added
+     * to the connection's userspace write_queue (nghttp2-server.c, right after
+     * session_send()):
+     *
+     *   wq_pkt   : number of pkbuf nodes on sbi_sess->write_queue at that moment
+     *   wq_bytes : total bytes across those pkbufs (sum of pkbuf->len)
+     *
+     * NOTE: in this build session_send() only ENQUEUES the response onto the
+     * userspace write_queue (the real ogs_send() happens later in the POLLOUT
+     * callback), so wq_pkt always includes this response's own pkbuf(s); it is
+     * an egress-backlog depth sample, not a "kernel back-pressure remainder".
+     * -1 means "not sampled" (e.g. the send-failure path).
+     *
+     * Only UDR sets these; for other NFs the fields stay 0 and the udr-lat-log
+     * writer is never initialized, so nothing is emitted.
+     */
+    struct {
+        ogs_time_t t1_enq;
+        ogs_time_t t2_deq;
+        ogs_time_t t3_db_req;
+        ogs_time_t t4_db_rsp;
+        int wq_pkt;
+        int64_t wq_bytes;
+    } tycustom_lat;
 } ogs_sbi_request_t;
 
 typedef struct ogs_sbi_response_s {

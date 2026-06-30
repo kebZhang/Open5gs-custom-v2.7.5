@@ -113,6 +113,19 @@ void *ogs_sbi_stream_find_by_id(ogs_pool_id_t id);
 /* TYcustom */
 ogs_sbi_request_t *ogs_sbi_request_from_stream(ogs_sbi_stream_t *stream);
 
+/*
+ * TYcustom (UDR per-request latency): optional hook invoked on the event-loop
+ * thread by ogs_sbi_server_send_response() RIGHT AFTER the response has
+ * completed HTTP/2 serialization and been appended to the connection's
+ * userspace write_queue (the "t5" instant). The real socket write occurs later
+ * in the POLLOUT callback. 'request' is the originating server request (may be
+ * NULL); 't5_tx' is ogs_time_now() captured at this enqueue boundary. The hook
+ * MUST NOT perform file I/O (UDR's impl formats a line into an async ring).
+ * NULL (the default) disables it. Register from udr init via this setter. */
+typedef void (*ogs_sbi_response_sent_cb_f)(
+        ogs_sbi_request_t *request, ogs_time_t t5_tx);
+void ogs_sbi_server_set_response_sent_cb(ogs_sbi_response_sent_cb_f cb);
+
 ogs_sbi_server_t *ogs_sbi_server_first(void);
 ogs_sbi_server_t *ogs_sbi_server_next(ogs_sbi_server_t *current);
 ogs_sbi_server_t *ogs_sbi_server_first_by_interface(const char *interface);

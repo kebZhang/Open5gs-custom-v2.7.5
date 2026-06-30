@@ -25,6 +25,16 @@ extern const ogs_sbi_server_actions_t ogs_nghttp2_server_actions;
 ogs_sbi_server_actions_t ogs_sbi_server_actions;
 bool ogs_sbi_server_actions_initialized = false;
 
+/* TYcustom (UDR per-request latency): optional response-serialized/enqueued
+ * hook. NULL for every NF except UDR, which registers udr_lat_log's emit at
+ * init. */
+static ogs_sbi_response_sent_cb_f ogs_sbi_response_sent_cb = NULL;
+
+void ogs_sbi_server_set_response_sent_cb(ogs_sbi_response_sent_cb_f cb)
+{
+    ogs_sbi_response_sent_cb = cb;
+}
+
 static OGS_POOL(server_pool, ogs_sbi_server_t);
 
 void ogs_sbi_server_init(int num_of_session_pool, int num_of_stream_pool)
@@ -181,14 +191,31 @@ bool ogs_sbi_server_send_rspmem_persistent(
 bool ogs_sbi_server_send_response(
         ogs_sbi_stream_t *stream, ogs_sbi_response_t *response)
 {
-    /* TYcustom: RSP_TX -- this NF is sending a response. The response itself
-     * carries no h.uri/h.method (ogs_sbi_build_response() leaves them unset),
-     * so we pass the originating request from the stream; the log keys off the
-     * request's (method, uri-path), the same path REQ_RX recorded. ueid is left
-     * empty (attributed offline by pairing on that path). */
-    ogs_http_log_rsp_tx(response, ogs_sbi_request_from_stream(stream));
+    bool rc;
+    ogs_sbi_request_t *request;
 
-    return ogs_sbi_server_actions.send_response(stream, response);
+    /* Resolve the originating request BEFORE the send: send_response() frees
+     * the response. The t5 hook below uses the originating request after the
+     * transport action returns. */
+    request = ogs_sbi_request_from_stream(stream);
+
+    /* TYcustom: RSP_TX is emitted INSIDE the nghttp2 send path
+     * (server_send_rspmem_persistent), AFTER session_send(), so that the line
+     * can carry the post-flush session write_queue depth ("wq"). Emitting it
+     * here (before the send) could not observe whether the response actually
+     * back-ed up on the NF. The send path has the response + stream->request +
+     * the session, so it logs the same (method, uri-path) key as before. */
+    rc = ogs_sbi_server_actions.send_response(stream, response);
+
+    /* TYcustom (UDR per-request latency): t5 -- HTTP/2 submit + session_send
+     * have serialized the response and appended its pkbuf(s) to the connection's
+     * userspace write_queue. No socket write is implied here; ogs_send() or
+     * SSL_write() runs later in the POLLOUT callback. Invoke the registered hook
+     * (UDR only; NULL elsewhere) to emit the combined 5-timestamp line. */
+    if (ogs_sbi_response_sent_cb)
+        ogs_sbi_response_sent_cb(request, ogs_time_now());
+
+    return rc;
 }
 
 bool ogs_sbi_server_send_problem(

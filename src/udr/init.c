@@ -18,6 +18,7 @@
  */
 
 #include "sbi-path.h"
+#include "udr-lat-log.h"
 
 static ogs_thread_t *thread;
 static void udr_main(void *data);
@@ -48,6 +49,13 @@ int udr_initialize(void)
     if (rv != OGS_OK) return rv;
 
     ogs_db_log_init("UDR");
+
+    /* TYcustom (UDR per-request latency): start the async UDR_log writer and
+     * register the t5 ("response serialized into userspace write_queue") hook
+     * so every DB-serving request gets one line with its five lifecycle
+     * timestamps. */
+    udr_lat_log_init();
+    ogs_sbi_server_set_response_sent_cb(udr_lat_log_emit);
 
     rv = udr_sbi_open();
     if (rv != OGS_OK) return rv;
@@ -94,6 +102,11 @@ void udr_terminate(void)
     ogs_timer_delete(t_termination_holding);
 
     udr_sbi_close();
+
+    /* TYcustom: unregister the hook before tearing down the writer so no late
+     * send_response() can call into a freed logger, then flush+stop it. */
+    ogs_sbi_server_set_response_sent_cb(NULL);
+    udr_lat_log_final();
 
     ogs_db_log_final();
 

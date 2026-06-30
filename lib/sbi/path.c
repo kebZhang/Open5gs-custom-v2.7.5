@@ -41,6 +41,11 @@ int ogs_sbi_server_handler(ogs_sbi_request_t *request, void *data)
      * pairing with the sender's REQ_TX line on (method, uri). */
     ogs_http_log_request(OGS_HTTP_LOG_REQ_RX, request, NULL);
 
+    /* TYcustom (UDR per-request latency): t1 = the moment this request is
+     * pushed onto the NF event queue. Harmless for non-UDR NFs (the field is
+     * only ever read by UDR's udr-lat-log emit). */
+    request->tycustom_lat.t1_enq = ogs_time_now();
+
     e = ogs_event_new(OGS_EVENT_SBI_SERVER);
     ogs_assert(e);
 

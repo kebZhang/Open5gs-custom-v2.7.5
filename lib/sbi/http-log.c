@@ -450,7 +450,7 @@ void ogs_http_log_response(const char *event,
 }
 
 void ogs_http_log_rsp_tx(
-        ogs_sbi_response_t *response, ogs_sbi_request_t *req)
+        ogs_sbi_response_t *response, ogs_sbi_request_t *req, int wq)
 {
     ogs_time_t now;
     char ts[40];
@@ -481,11 +481,16 @@ void ogs_http_log_rsp_tx(
             dst = ua;
     }
 
+    /* wq = session userspace write_queue depth after this response completed
+     * HTTP/2 serialization. It includes this response's own pkbuf(s), plus any
+     * older queued output. The real socket write occurs later via OGS_POLLOUT.
+     */
     len = ogs_snprintf(line, sizeof(line),
             "{\"event\":\"%s\",\"src\":\"%s\",\"dst\":\"%s\","
-            "\"method\":\"%s\",\"uri\":\"%s\",\"ueid\":\"%s\",\"ts\":\"%s\"}\n",
+            "\"method\":\"%s\",\"uri\":\"%s\",\"ueid\":\"%s\","
+            "\"wq\":%d,\"ts\":\"%s\"}\n",
             OGS_HTTP_LOG_RSP_TX, self_nf_name(), dst,
-            method, uri, "", ts);
+            method, uri, "", wq, ts);
 
     ring_push(line, len);
 }

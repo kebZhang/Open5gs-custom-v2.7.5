@@ -19,6 +19,7 @@
 
 #include "sbi-path.h"
 #include "nudr-handler.h"
+#include "udr-lat-log.h"
 
 bool udr_nudr_dr_handle_subscription_authentication(
         ogs_sbi_stream_t *stream, ogs_sbi_message_t *recvmsg)
@@ -63,7 +64,7 @@ bool udr_nudr_dr_handle_subscription_authentication(
         return false;
     }
 
-    rv = ogs_dbi_auth_info(supi, &auth_info);
+    UDR_LAT_DB(stream, rv = ogs_dbi_auth_info(supi, &auth_info));
     if (rv != OGS_OK) {
         ogs_warn("[%s] Cannot find SUPI in DB", supi);
         ogs_assert(true ==
@@ -154,7 +155,7 @@ bool udr_nudr_dr_handle_subscription_authentication(
                     sqn_ms, sizeof(sqn_ms));
             sqn = ogs_buffer_to_uint64(sqn_ms, OGS_SQN_LEN);
 
-            rv = ogs_dbi_update_sqn(supi, sqn);
+            UDR_LAT_DB(stream, rv = ogs_dbi_update_sqn(supi, sqn));
             if (rv != OGS_OK) {
                 ogs_fatal("[%s] Cannot update SQN", supi);
                 ogs_assert(true ==
@@ -164,7 +165,7 @@ bool udr_nudr_dr_handle_subscription_authentication(
                 return false;
             }
 
-            rv = ogs_dbi_increment_sqn(supi);
+            UDR_LAT_DB(stream, rv = ogs_dbi_increment_sqn(supi));
             if (rv != OGS_OK) {
                 ogs_fatal("[%s] Cannot increment SQN", supi);
                 ogs_assert(true ==
@@ -211,7 +212,7 @@ bool udr_nudr_dr_handle_subscription_authentication(
             }
 
             memset(&sendmsg, 0, sizeof(sendmsg));
-            rv = ogs_dbi_increment_sqn(supi);
+            UDR_LAT_DB(stream, rv = ogs_dbi_increment_sqn(supi));
             if (rv != OGS_OK) {
                 ogs_fatal("[%s] Cannot increment SQN", supi);
                 ogs_assert(true ==
@@ -309,7 +310,8 @@ bool udr_nudr_dr_handle_subscription_context(
                 ogs_assert(value);
 
                 if (strcmp(type, "imeisv") == 0) {
-                    ogs_assert(OGS_OK == ogs_dbi_update_imeisv(supi, value));
+                    UDR_LAT_DB(stream,
+                        ogs_assert(OGS_OK == ogs_dbi_update_imeisv(supi, value)));
                 } else {
                     ogs_fatal("Unknown Type = %s", type);
                     ogs_assert_if_reached();
@@ -451,8 +453,8 @@ bool udr_nudr_dr_handle_subscription_provisioned(
         goto cleanup;
     }
 
-    rv = ogs_dbi_subscription_data(supi, &subscription_data,
-            recvmsg->h.resource.component[4]);
+    UDR_LAT_DB(stream, rv = ogs_dbi_subscription_data(supi, &subscription_data,
+            recvmsg->h.resource.component[4]));
     if (rv != OGS_OK) {
         strerror = ogs_msprintf("[%s] Cannot find SUPI in DB", supi);
         status = OGS_SBI_HTTP_STATUS_NOT_FOUND;
@@ -1133,8 +1135,9 @@ bool udr_nudr_dr_handle_policy_data(
         CASE(OGS_SBI_HTTP_METHOD_GET)
             OpenAPI_lnode_t *node = NULL, *node2 = NULL;
 
-            rv = ogs_dbi_subscription_data(supi, &subscription_data,
-                    recvmsg->h.resource.component[3]);
+            UDR_LAT_DB(stream,
+                rv = ogs_dbi_subscription_data(supi, &subscription_data,
+                    recvmsg->h.resource.component[3]));
             if (rv != OGS_OK) {
                 strerror = ogs_msprintf("[%s] Cannot find SUPI in DB", supi);
                 status = OGS_SBI_HTTP_STATUS_NOT_FOUND;

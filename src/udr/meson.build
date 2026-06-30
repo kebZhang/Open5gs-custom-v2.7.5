@@ -21,6 +21,8 @@ libudr_sources = files('''
 
     nudr-handler.c
 
+    udr-lat-log.c
+
     sbi-path.c
     udr-sm.c
 

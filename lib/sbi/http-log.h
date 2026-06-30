@@ -73,9 +73,20 @@ void ogs_http_log_response(const char *event,
  * from the originating server request (req, may be NULL). ue_id is left empty;
  * the offline step attributes it by pairing on the request's (method, uri-path)
  * with the REQ_RX/REQ_TX lines.
+ *
+ * wq : the session write_queue depth (number of pkbuf still pending) measured
+ *      right AFTER this response was submitted+flushed via session_send().
+ *        wq == 0  -> ogs_send() pushed every byte straight into the kernel TCP
+ *                    send buffer; the response did NOT back up in the NF. This
+ *                    is the "one-shot write" case.
+ *        wq  > 0  -> the kernel send buffer was full, so wq leftover byte-chunks
+ *                    were parked on the session write_queue and an OGS_POLLOUT
+ *                    handler was registered to flush them LATER (next time the
+ *                    single event-loop thread returns to the pollset). This is
+ *                    egress back-pressure: the response's bytes wait on the NF.
  */
 void ogs_http_log_rsp_tx(
-        ogs_sbi_response_t *response, ogs_sbi_request_t *req);
+        ogs_sbi_response_t *response, ogs_sbi_request_t *req, int wq);
 
 /* Number of records dropped because the ring was full (0 == writer keeps up). */
 uint64_t ogs_http_log_dropped(void);
