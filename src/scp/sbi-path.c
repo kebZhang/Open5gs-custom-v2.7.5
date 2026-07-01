@@ -40,6 +40,92 @@ static void copy_request(
         ogs_sbi_request_t *target, ogs_sbi_request_t *source,
         bool do_not_remove_custom_header);
 
+/* ===== TYcustom: UE-affinity routing for UDR (ueid % N) =====================
+ *
+ * When multiple UDR instances are deployed, route every SBI request for a given
+ * UE to ONE fixed UDR, keyed by idx = imsi % N. This keeps a UE's entire
+ * registration AND deregistration served by a single UDR. Routing depends only
+ * on the imsi carried in the request URI, so it is identical for register and
+ * dereg, and for both callers (UDM->UDR and PCF->UDR).
+ *
+ * See UDR_SCALEOUT_SCP_ROUTING_PLAN.md for the full design and rationale.
+ * ------------------------------------------------------------------------- */
+
+/* Extract the UE's imsi digit string from the request URI. Covers both UDR
+ * path shapes:
+ *   /nudr-dr/v1/subscription-data/imsi-<digits>/...   (UDM: register + dereg)
+ *   /nudr-dr/v1/policy-data/ues/imsi-<digits>/...      (PCF)
+ * Grabs the digits right after the first "imsi-". Returns false if none. */
+static bool scp_udr_extract_imsi_digits(
+        const char *uri, char *buf, size_t buflen)
+{
+    const char *p;
+    size_t n = 0;
+
+    if (!uri) return false;
+    p = strstr(uri, "imsi-");
+    if (!p) return false;
+    p += 5; /* skip "imsi-" */
+    while (*p >= '0' && *p <= '9' && n + 1 < buflen)
+        buf[n++] = *p++;
+    if (n == 0) return false;
+    buf[n] = '\0';
+    return true;
+}
+
+/* Stable sort key for a UDR instance = its pod IP string. In this deployment
+ * the UDR config uses `sbi.server: - dev: eth0` (no advertise), so each UDR
+ * registers to NRF with its own pod IP and nf_instance->fqdn is empty. Pod IP
+ * is constant for the life of the experiment (pods are not restarted), so the
+ * ordering is stable and reproducible. Read-only; do not free. Note
+ * ogs_sockaddr_to_string_static() returns a shared static buffer. */
+static const char *scp_udr_sort_key(ogs_sbi_nf_instance_t *nf)
+{
+    if (nf->num_of_ipv4 > 0 && nf->ipv4[0])
+        return ogs_sockaddr_to_string_static(nf->ipv4[0]);
+    if (nf->fqdn)
+        return nf->fqdn;
+    return nf->id;
+}
+
+/* Collect every "target==UDR and discovery-matched" instance from the global
+ * nf_instance_list, insertion-sort them ascending by pod IP, return the count;
+ * result written into out[] (capacity out_max). */
+static int scp_collect_sorted_udr(
+        OpenAPI_nf_type_e target_nf_type,
+        OpenAPI_nf_type_e requester_nf_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_nf_instance_t **out, int out_max)
+{
+    ogs_sbi_nf_instance_t *nf = NULL;
+    int cnt = 0, i, j;
+
+    ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf) {
+        if (!ogs_sbi_discovery_param_is_matched(
+                nf, target_nf_type, requester_nf_type, discovery_option))
+            continue;
+        if (cnt < out_max)
+            out[cnt++] = nf;
+    }
+
+    /* Insertion sort (N is small). ogs_sockaddr_to_string_static() shares one
+     * static buffer, so copy the inserted element's key onto the stack (kk[])
+     * before comparing, to avoid two calls overwriting each other. */
+    for (i = 1; i < cnt; i++) {
+        ogs_sbi_nf_instance_t *key = out[i];
+        char kk[OGS_ADDRSTRLEN];
+        ogs_cpystrn(kk, scp_udr_sort_key(key), sizeof(kk));
+        j = i - 1;
+        while (j >= 0) {
+            if (strcmp(scp_udr_sort_key(out[j]), kk) <= 0) break;
+            out[j + 1] = out[j];
+            j--;
+        }
+        out[j + 1] = key;
+    }
+    return cnt;
+}
+
 int scp_sbi_open(void)
 {
     ogs_sbi_nf_instance_t *nf_instance = NULL, *nrf_instance = NULL;
@@ -799,8 +885,41 @@ static int nf_discover_handler(
 
     ogs_nnrf_disc_handle_nf_discover_search_result(message.SearchResult);
 
-    nf_instance = ogs_sbi_nf_instance_find_by_discovery_param(
-            target_nf_type, requester_nf_type, discovery_option);
+    /* ===== TYcustom: UDR UE-affinity routing (ueid % N) ====================
+     * Only when target is UDR and an imsi can be extracted from the URI, pick
+     * the UDR deterministically by idx = imsi % N (N = live UDR count, sorted
+     * by pod IP). Otherwise fall through to the original selection. The gate is
+     * target==UDR so it covers BOTH UDM->UDR and PCF->UDR. */
+    nf_instance = NULL;
+    if (target_nf_type == OpenAPI_nf_type_UDR) {
+#define SCP_MAX_UDR 64
+        ogs_sbi_nf_instance_t *udr_arr[SCP_MAX_UDR];
+        char imsi_digits[32];
+        int n_udr;
+
+        if (scp_udr_extract_imsi_digits(
+                request->h.uri, imsi_digits, sizeof(imsi_digits))) {
+            n_udr = scp_collect_sorted_udr(
+                    target_nf_type, requester_nf_type, discovery_option,
+                    udr_arr, SCP_MAX_UDR);
+            if (n_udr > 0) {
+                uint64_t ueid = strtoull(imsi_digits, NULL, 10);
+                int idx = (int)(ueid % (uint64_t)n_udr);
+                nf_instance = udr_arr[idx];
+                ogs_info("[SCP-UDR-ROUTE] imsi=%s n_udr=%d idx=%d -> %s",
+                        imsi_digits, n_udr, idx,
+                        scp_udr_sort_key(nf_instance));
+            } else {
+                ogs_warn("[SCP-UDR-ROUTE] no UDR candidate for imsi=%s",
+                        imsi_digits);
+            }
+        }
+    }
+
+    /* fallback: non-UDR / no imsi / no UDR candidate -> original selection */
+    if (!nf_instance)
+        nf_instance = ogs_sbi_nf_instance_find_by_discovery_param(
+                target_nf_type, requester_nf_type, discovery_option);
     if (!nf_instance) {
         strerror = ogs_msprintf("(NF discover) No NF-Instance [%s:%s]",
                     ogs_sbi_service_type_to_name(service_type),
