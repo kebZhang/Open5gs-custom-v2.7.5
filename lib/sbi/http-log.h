@@ -18,7 +18,10 @@
  * Write order is not preserved; the offline analysis re-sorts by timestamp and
  * groups by (ue_id, method, uri).
  *
- * Output path: env HTTP_LOG_PATH, default /tmp/HTTP_log.txt.
+ * Output path: env HTTP_LOG_PATH, default /tmp/HTTP_log.txt. When HOSTNAME is
+ * set (Kubernetes pod name), a "_<pod>" suffix is inserted before the ".txt"
+ * extension so each NF instance writes a distinct file, e.g.
+ * /tmp/HTTP_log_udr-0.txt.
  */
 
 #ifndef OGS_SBI_HTTP_LOG_H

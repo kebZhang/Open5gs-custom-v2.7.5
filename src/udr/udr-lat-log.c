@@ -182,6 +182,25 @@ static void writer_main(void *data)
         fflush(self.fp);
 }
 
+/* Insert a per-pod suffix before the file extension so that many UDR instances
+ * (e.g. 10 UDR pods) each write a distinct file under their own /tmp. The pod
+ * name is taken from HOSTNAME, which Kubernetes sets to the pod name by default.
+ * If HOSTNAME is unset the base path is used verbatim. Returns a new alloc. */
+static char *udr_lat_log_path_with_pod(const char *base)
+{
+    const char *pod = getenv("HOSTNAME");
+    const char *dot;
+
+    if (!pod || pod[0] == '\0')
+        return ogs_strdup(base);
+
+    dot = strrchr(base, '.');
+    if (dot && dot != base)
+        return ogs_msprintf("%.*s_%s%s",
+                (int)(dot - base), base, pod, dot);
+    return ogs_msprintf("%s_%s", base, pod);
+}
+
 /* ------------------------------------------------------------------ */
 /* public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -196,7 +215,7 @@ void udr_lat_log_init(void)
     memset(&self, 0, sizeof(self));
 
     env = getenv("UDR_LAT_LOG_PATH");
-    self.path = ogs_strdup(env ? env : UDR_LAT_LOG_DEFAULT_PATH);
+    self.path = udr_lat_log_path_with_pod(env ? env : UDR_LAT_LOG_DEFAULT_PATH);
     ogs_assert(self.path);
 
     self.fp = fopen(self.path, "a");

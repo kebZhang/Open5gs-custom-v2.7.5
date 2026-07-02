@@ -32,7 +32,9 @@
  * Mechanism is intentionally identical to lib/sbi/http-log.c so the two logs can
  * be analysed together by timestamp.
  *
- * Output path: env UDR_LAT_LOG_PATH, default /tmp/UDR_log.txt.
+ * Output path: env UDR_LAT_LOG_PATH, default /tmp/UDR_log.txt. When HOSTNAME is
+ * set (Kubernetes pod name), a "_<pod>" suffix is inserted before the ".txt"
+ * extension, e.g. /tmp/UDR_log_udr-0.txt, so 10 UDR pods write distinct files.
  */
 
 #ifndef UDR_LAT_LOG_H

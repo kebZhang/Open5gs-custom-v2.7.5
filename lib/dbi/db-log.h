@@ -19,7 +19,9 @@
  * Because each open5gs NF runs as its own pod, each pod opens and writes its own
  * DB_log.txt.
  *
- * Output path: env DB_LOG_PATH, default /tmp/DB_log.txt.
+ * Output path: env DB_LOG_PATH, default /tmp/DB_log.txt. When HOSTNAME is set
+ * (Kubernetes pod name), a "_<pod>" suffix is inserted before the ".txt"
+ * extension, e.g. /tmp/DB_log_udr-0.txt, so instances never clobber each other.
  *
  * NF name: lib/dbi does NOT depend on lib/sbi, so it cannot ask ogs_sbi_self()
  * which NF it runs as. Each NF passes its own name to ogs_db_log_init("UDR").

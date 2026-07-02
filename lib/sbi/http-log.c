@@ -244,6 +244,28 @@ static void writer_main(void *data)
         fflush(self.fp);
 }
 
+/* Insert a per-pod suffix before the file extension so that many NF instances
+ * (e.g. 10 UDR pods) each write a distinct file under their own /tmp without
+ * clobbering one another. The pod name is taken from HOSTNAME, which Kubernetes
+ * sets to the pod name by default. If HOSTNAME is unset (bare-metal/local run)
+ * the base path is used verbatim. Returns a newly ogs_*-allocated string. */
+static char *http_log_path_with_pod(const char *base)
+{
+    const char *pod = getenv("HOSTNAME");
+    const char *dot;
+
+    if (!pod || pod[0] == '\0')
+        return ogs_strdup(base);
+
+    /* Insert "_<pod>" before the last '.' (the extension). If there is no '.'
+     * in the basename, append "_<pod>" to the end. */
+    dot = strrchr(base, '.');
+    if (dot && dot != base)
+        return ogs_msprintf("%.*s_%s%s",
+                (int)(dot - base), base, pod, dot);
+    return ogs_msprintf("%s_%s", base, pod);
+}
+
 /* ------------------------------------------------------------------ */
 /* public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -258,7 +280,7 @@ void ogs_http_log_init(void)
     memset(&self, 0, sizeof(self));
 
     env = getenv("HTTP_LOG_PATH");
-    self.path = ogs_strdup(env ? env : HTTP_LOG_DEFAULT_PATH);
+    self.path = http_log_path_with_pod(env ? env : HTTP_LOG_DEFAULT_PATH);
     ogs_assert(self.path);
 
     self.fp = fopen(self.path, "a");

@@ -36,6 +36,30 @@ static const char *env_or(const char *key, const char *def)
     return def;
 }
 
+/* Resolved log path including a per-pod suffix (see accesslog_resolve_path).
+ * Computed once at init and reused by the writer thread. */
+static char *resolved_path = NULL;
+
+/* Insert a per-pod suffix before the file extension so that many NF instances
+ * each write a distinct file under their own /tmp. The pod name is taken from
+ * HOSTNAME, which Kubernetes sets to the pod name by default. If HOSTNAME is
+ * unset the base path is used verbatim. Returns a new ogs_*-allocated string. */
+static char *accesslog_resolve_path(void)
+{
+    const char *base = env_or(ENV_NGAP_PATH, DEFAULT_NGAP_PATH);
+    const char *pod = getenv("HOSTNAME");
+    const char *dot;
+
+    if (!pod || pod[0] == '\0')
+        return ogs_strdup(base);
+
+    dot = strrchr(base, '.');
+    if (dot && dot != base)
+        return ogs_msprintf("%.*s_%s%s",
+                (int)(dot - base), base, pod, dot);
+    return ogs_msprintf("%s_%s", base, pod);
+}
+
 /* Render an ogs_time_t (microseconds since epoch, GMT) as an RFC3339-ish
  * UTC string with microsecond precision, e.g. 2026-06-29T12:34:56.123456Z.
  * Matches the sortable format used by the free5gc AMF_log. */
@@ -74,7 +98,8 @@ static void writer_loop(void *data)
 
     (void)data;
 
-    fp = fopen(env_or(ENV_NGAP_PATH, DEFAULT_NGAP_PATH), "a");
+    fp = fopen(resolved_path ? resolved_path :
+            env_or(ENV_NGAP_PATH, DEFAULT_NGAP_PATH), "a");
     if (!fp)
         ogs_error("accesslog: cannot open log file; records will be dropped");
     else
@@ -108,12 +133,17 @@ static void writer_loop(void *data)
 void amf_accesslog_init(void)
 {
     if (running) return;
+    /* Resolve the per-pod path once, before the writer thread starts, so the
+     * writer and this info log agree on the file name. */
+    if (!resolved_path)
+        resolved_path = accesslog_resolve_path();
     log_queue = ogs_queue_create(ACCESSLOG_QUEUE_CAP);
     ogs_assert(log_queue);
     running = true;
     writer_thread = ogs_thread_create(writer_loop, NULL);
     ogs_assert(writer_thread);
     ogs_info("accesslog: writer started, file=%s",
+            resolved_path ? resolved_path :
             env_or(ENV_NGAP_PATH, DEFAULT_NGAP_PATH));
 }
 
@@ -127,6 +157,11 @@ void amf_accesslog_final(void)
     ogs_queue_destroy(log_queue);
     writer_thread = NULL;
     log_queue = NULL;
+
+    if (resolved_path) {
+        ogs_free(resolved_path);
+        resolved_path = NULL;
+    }
 
     n = __atomic_load_n(&dropped, __ATOMIC_RELAXED);
     if (n)

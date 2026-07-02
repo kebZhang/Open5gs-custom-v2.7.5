@@ -13,7 +13,9 @@
  *     and sorted by timestamp afterwards regardless of write order.
  *
  * File path is overridable with the NGAP_LOG_PATH env var
- * (default /tmp/AMF_log.txt).
+ * (default /tmp/AMF_log.txt). When HOSTNAME is set (Kubernetes pod name), a
+ * "_<pod>" suffix is inserted before the ".txt" extension, e.g.
+ * /tmp/AMF_log_amf-0.txt.
  */
 #ifndef AMF_ACCESSLOG_H
 #define AMF_ACCESSLOG_H
