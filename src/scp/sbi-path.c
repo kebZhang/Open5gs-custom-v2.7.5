@@ -448,6 +448,16 @@ static int request_handler(ogs_sbi_request_t *request, void *data)
                         if (udr_client) {
                             nf_instance = chosen;
                             client = udr_client;
+                            /* CRITICAL: the caller (UDM/PCF) cached its first
+                             * UDR and sends every later request with
+                             * 3gpp-Sbi-Target-apiRoot pinned to that pod
+                             * (lib/sbi/path.c ~line 368). If we leave it set,
+                             * the send path below (line ~509/~571) re-resolves
+                             * the client from that apiroot and OVERRIDES our
+                             * imsi%N choice. Drop it so our chosen UDR wins.
+                             * (Local pointer into the header value; not owned,
+                             * so nulling it frees nothing.) */
+                            headers.target_apiroot = NULL;
                             ogs_info("[SCP-UDR-ROUTE] imsi=%s n_udr=%d idx=%d "
                                     "-> %s", imsi_digits, n_udr, idx,
                                     scp_udr_sort_key(chosen));
