@@ -51,6 +51,9 @@ static void copy_request(
  * See UDR_SCALEOUT_SCP_ROUTING_PLAN.md for the full design and rationale.
  * ------------------------------------------------------------------------- */
 
+/* Max UDR candidates collected per request (>> any realistic replica count). */
+#define SCP_MAX_UDR 64
+
 /* Extract the UE's imsi digit string from the request URI. Covers both UDR
  * path shapes:
  *   /nudr-dr/v1/subscription-data/imsi-<digits>/...   (UDM: register + dereg)
@@ -413,7 +416,57 @@ static int request_handler(ogs_sbi_request_t *request, void *data)
         if (target_nf_type == OpenAPI_nf_type_NRF)
             client = NF_INSTANCE_CLIENT(ogs_sbi_self()->nrf_instance);
         else {
-            if (discovery_option && discovery_option->target_nf_instance_id) {
+            /* ===== TYcustom: UDR UE-affinity routing (imsi % N) at the request
+             * ENTRY point ==========================================================
+             * The caller (UDM/PCF) caches the UDR it discovered once and then puts
+             * Target-nf-instance-id on every subsequent request, so those requests
+             * are sent directly (line ~455) and NEVER reach the discover callback
+             * where the original routing lived. Do the routing here, BEFORE the
+             * Target-nf-instance-id lookup, and deliberately OVERRIDE the caller's
+             * pinned instance so a UE's imsi always maps to the same UDR.
+             *
+             * Gate on target==UDR (covers UDM->UDR and PCF->UDR). If we cannot
+             * extract an imsi, or have no locally-known UDR candidate, fall through
+             * to the stock logic below (no crash, no dropped request). */
+            if (target_nf_type == OpenAPI_nf_type_UDR) {
+                ogs_sbi_nf_instance_t *udr_arr[SCP_MAX_UDR];
+                char imsi_digits[32];
+
+                if (scp_udr_extract_imsi_digits(
+                        request->h.uri, imsi_digits, sizeof(imsi_digits))) {
+                    int n_udr = scp_collect_sorted_udr(
+                            target_nf_type, requester_nf_type,
+                            discovery_option, udr_arr, SCP_MAX_UDR);
+                    if (n_udr > 0) {
+                        uint64_t ueid =
+                            ogs_uint64_from_string_decimal(imsi_digits);
+                        int idx = (int)(ueid % (uint64_t)n_udr);
+                        ogs_sbi_nf_instance_t *chosen = udr_arr[idx];
+                        ogs_sbi_client_t *udr_client =
+                            ogs_sbi_client_find_by_service_type(
+                                    chosen, service_type);
+                        if (udr_client) {
+                            nf_instance = chosen;
+                            client = udr_client;
+                            ogs_info("[SCP-UDR-ROUTE] imsi=%s n_udr=%d idx=%d "
+                                    "-> %s", imsi_digits, n_udr, idx,
+                                    scp_udr_sort_key(chosen));
+                        } else {
+                            ogs_warn("[SCP-UDR-ROUTE] no client for chosen UDR "
+                                    "%s (imsi=%s), fallback",
+                                    scp_udr_sort_key(chosen), imsi_digits);
+                        }
+                    } else {
+                        ogs_warn("[SCP-UDR-ROUTE] no UDR candidate for imsi=%s, "
+                                "fallback", imsi_digits);
+                    }
+                }
+            }
+
+            /* Stock path: honor Target-nf-instance-id only if the UDR-affinity
+             * routing above did not already pick a client. */
+            if (!client &&
+                    discovery_option && discovery_option->target_nf_instance_id) {
                 nf_instance = ogs_sbi_nf_instance_find(
                         discovery_option->target_nf_instance_id);
                 if (nf_instance) {
@@ -892,7 +945,6 @@ static int nf_discover_handler(
      * target==UDR so it covers BOTH UDM->UDR and PCF->UDR. */
     nf_instance = NULL;
     if (target_nf_type == OpenAPI_nf_type_UDR) {
-#define SCP_MAX_UDR 64
         ogs_sbi_nf_instance_t *udr_arr[SCP_MAX_UDR];
         char imsi_digits[32];
         int n_udr;
